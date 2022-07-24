@@ -9,6 +9,7 @@ package teltonika
 import (
 	"bytes"
 	"encoding/hex"
+	"io"
 	"math/rand"
 	"strings"
 	"testing"
@@ -250,7 +251,7 @@ func TestCodecsDecodeCommandResponseWithoutErrors(t *testing.T) {
 	}
 }
 
-func BenchmarkTCPDecode(b *testing.B) {
+func tcpBenchCases(n int) [][]byte {
 	cases := []string{
 		"000000000000003608010000016B40D8EA30010000000000000000000000000000000105021503010101425E0F01F10000601A014E0000000000000000010000C7CF",
 		"000000000000002808010000016B40D9AD80010000000000000000000000000000000103021503010101425E100000010000F22A",
@@ -267,23 +268,45 @@ func BenchmarkTCPDecode(b *testing.B) {
 		casesBin[i] = bs
 	}
 
-	benchCase := make([][]byte, b.N)
+	benchCases := make([][]byte, n)
 
-	for i := 0; i < b.N; i++ {
-		benchCase[i] = casesBin[rand.Intn(len(cases))]
+	for i := 0; i < n; i++ {
+		benchCases[i] = casesBin[rand.Intn(len(cases))]
 	}
+
+	return benchCases
+}
+
+func benchmarkTCPDecodeSlice(b *testing.B, config ...*DecodeConfig) {
+	benchCases := tcpBenchCases(b.N)
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _, err := DecodeTCPFromSlice(benchCase[i])
+		_, _, err := DecodeTCPFromSlice(benchCases[i], config...)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkUDPDecode(b *testing.B) {
+func benchmarkTCPDecodeReader(b *testing.B, config ...*DecodeConfig) {
+	benchCases := tcpBenchCases(b.N)
+	readers := make([]io.Reader, len(benchCases))
+	for i, benchCase := range benchCases {
+		readers[i] = bytes.NewReader(benchCase)
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _, err := DecodeTCPFromReader(readers[i], config...)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func udpBenchCases(n int) [][]byte {
 	cases := []string{
 		"005FCAFE0107000F3335323039333038363430333635358E010000016B4F831C680100000000000000000000000000000000010005000100010100010011009D00010010015E2C880002000B000000003544C87A000E000000001DD7E06A000001",
 		"003DCAFE0105000F33353230393330383634303336353508010000016B4F815B30010000000000000000000000000000000103021503010101425DBC000001",
@@ -299,20 +322,73 @@ func BenchmarkUDPDecode(b *testing.B) {
 		casesBin[i] = bs
 	}
 
-	benchCase := make([][]byte, b.N)
+	benchCases := make([][]byte, n)
 
-	for i := 0; i < b.N; i++ {
-		benchCase[i] = casesBin[rand.Intn(len(cases))]
+	for i := 0; i < n; i++ {
+		benchCases[i] = casesBin[rand.Intn(len(cases))]
 	}
 
+	return benchCases
+}
+
+func benchmarkUDPDecodeSlice(b *testing.B, config ...*DecodeConfig) {
+	benchCases := udpBenchCases(b.N)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _, err := DecodeUDPFromSlice(benchCase[i])
+		_, _, err := DecodeUDPFromSlice(benchCases[i], config...)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+func benchmarkUDPDecodeReader(b *testing.B, config ...*DecodeConfig) {
+	benchCases := udpBenchCases(b.N)
+	readers := make([]io.Reader, len(benchCases))
+	for i, benchCase := range benchCases {
+		readers[i] = bytes.NewReader(benchCase)
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _, err := DecodeUDPFromReader(readers[i], config...)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkTCPDecode(b *testing.B) {
+	benchmarkTCPDecodeSlice(b)
+}
+
+func BenchmarkTCPDecodeReader(b *testing.B) {
+	benchmarkTCPDecodeReader(b)
+}
+
+func BenchmarkUDPDecodeSlice(b *testing.B) {
+	benchmarkUDPDecodeSlice(b)
+}
+
+func BenchmarkUDPDecodeReader(b *testing.B) {
+	benchmarkUDPDecodeReader(b)
+}
+
+func BenchmarkTCPDecodeAllocElementsOnReadBuffer(b *testing.B) {
+	benchmarkTCPDecodeSlice(b, &DecodeConfig{OnReadBuffer})
+}
+
+func BenchmarkTCPDecodeReaderAllocElementsOnReadBuffer(b *testing.B) {
+	benchmarkTCPDecodeReader(b, &DecodeConfig{OnReadBuffer})
+}
+
+func BenchmarkUDPDecodeSliceAllocElementsOnReadBuffer(b *testing.B) {
+	benchmarkUDPDecodeSlice(b, &DecodeConfig{OnReadBuffer})
+}
+
+func BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer(b *testing.B) {
+	benchmarkUDPDecodeReader(b, &DecodeConfig{OnReadBuffer})
 }
 
 func BenchmarkEncode(b *testing.B) {

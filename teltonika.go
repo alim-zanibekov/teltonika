@@ -50,6 +50,14 @@ const (
 	TypeResponse MessageType = 0x06
 )
 
+type IOElementsAlloc uint8
+
+//goland:noinspection GoUnusedConst
+const (
+	OnHeap       IOElementsAlloc = iota // Alloc IOElement->Value on heap (make([]byte, x))
+	OnReadBuffer                        // IOElement->Value = readBuffer[x:y]
+)
+
 type DecodedUDP struct {
 	PacketId    uint16  `json:"packetId"`
 	AvlPacketId uint8   `json:"avlPacketId"`
@@ -95,11 +103,28 @@ type Message struct {
 	Text      string      `json:"command"`
 }
 
+// DecodeConfig optional configuration that can be passed in all Decode* functions (last param).
+// By default, used - DecodeConfig { IoElementsAlloc: OnHeap }
+type DecodeConfig struct {
+	IoElementsAlloc IOElementsAlloc // IOElement->Value allocation mode: `OnHeap` or `OnReadBuffer`
+}
+
+var defaultDecodeConfig = &DecodeConfig{
+	IoElementsAlloc: OnHeap,
+}
+
 // DecodeTCPFromSlice
 // decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from slice
 // returns the number of bytes read from 'inputBuffer' and decoded packet or an error
-func DecodeTCPFromSlice(inputBuffer []byte) (int, *DecodedTCP, error) {
-	buf, packet, err := decodeTCPInternal(nil, inputBuffer, nil)
+func DecodeTCPFromSlice(inputBuffer []byte, config ...*DecodeConfig) (int, *DecodedTCP, error) {
+	if len(config) > 1 {
+		return 0, nil, fmt.Errorf("too many arguments specified")
+	}
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	buf, packet, err := decodeTCPInternal(nil, inputBuffer, nil, cfg)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -109,27 +134,48 @@ func DecodeTCPFromSlice(inputBuffer []byte) (int, *DecodedTCP, error) {
 // DecodeTCPFromReader
 // decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from io.Reader
 // returns decoded packet or an error
-func DecodeTCPFromReader(input io.Reader) ([]byte, *DecodedTCP, error) {
-	return decodeTCPInternal(input, nil, nil)
+func DecodeTCPFromReader(input io.Reader, config ...*DecodeConfig) ([]byte, *DecodedTCP, error) {
+	if len(config) > 1 {
+		return nil, nil, fmt.Errorf("too many arguments specified")
+	}
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	return decodeTCPInternal(input, nil, nil, cfg)
 }
 
 // DecodeTCPFromReaderBuf
 // decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from io.Reader
 // writes the read bytes to readBytes buffer (max packet size 1280 bytes)
 // returns the number of bytes read and decoded packet or an error
-func DecodeTCPFromReaderBuf(input io.Reader, readBytes []byte) (int, *DecodedTCP, error) {
+func DecodeTCPFromReaderBuf(input io.Reader, readBytes []byte, config ...*DecodeConfig) (int, *DecodedTCP, error) {
+	if len(config) > 1 {
+		return 0, nil, fmt.Errorf("too many arguments specified")
+	}
 	if readBytes == nil {
 		return 0, nil, fmt.Errorf("output readBytes is nil, use DecodeTCPFromReader if you dont want use fixed buffer to read")
 	}
-	buf, packet, err := decodeTCPInternal(input, nil, readBytes)
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	buf, packet, err := decodeTCPInternal(input, nil, readBytes, cfg)
 	return len(buf), packet, err
 }
 
 // DecodeUDPFromSlice
 // decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from slice
 // returns the number of bytes read from 'inputBuffer' and decoded packet or an error
-func DecodeUDPFromSlice(inputBuffer []byte) (int, *DecodedUDP, error) {
-	buf, packet, err := decodeUDPInternal(nil, inputBuffer, nil)
+func DecodeUDPFromSlice(inputBuffer []byte, config ...*DecodeConfig) (int, *DecodedUDP, error) {
+	if len(config) > 1 {
+		return 0, nil, fmt.Errorf("too many arguments specified")
+	}
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	buf, packet, err := decodeUDPInternal(nil, inputBuffer, nil, cfg)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -139,19 +185,34 @@ func DecodeUDPFromSlice(inputBuffer []byte) (int, *DecodedUDP, error) {
 // DecodeUDPFromReader
 // decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from io.Reader
 // returns the read buffer and decoded packet or an error
-func DecodeUDPFromReader(input io.Reader) ([]byte, *DecodedUDP, error) {
-	return decodeUDPInternal(input, nil, nil)
+func DecodeUDPFromReader(input io.Reader, config ...*DecodeConfig) ([]byte, *DecodedUDP, error) {
+	if len(config) > 1 {
+		return nil, nil, fmt.Errorf("too many arguments specified")
+	}
+
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	return decodeUDPInternal(input, nil, nil, cfg)
 }
 
 // DecodeUDPFromReaderBuf
 // decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from io.Reader
 // writes read bytes to readBytes slice (max packet size 1280 bytes)
 // returns the number of bytes read and decoded packet or an error
-func DecodeUDPFromReaderBuf(input io.Reader, readBytes []byte) (int, *DecodedUDP, error) {
+func DecodeUDPFromReaderBuf(input io.Reader, readBytes []byte, config ...*DecodeConfig) (int, *DecodedUDP, error) {
+	if len(config) > 1 {
+		return 0, nil, fmt.Errorf("too many arguments specified")
+	}
 	if readBytes == nil {
 		return 0, nil, fmt.Errorf("output readBytes is nil, use DecodeUDPFromReader if you don't want use fixed buffer to read")
 	}
-	buf, packet, err := decodeUDPInternal(input, nil, readBytes)
+	cfg := defaultDecodeConfig
+	if len(config) == 1 && config[0] != nil {
+		cfg = config[0]
+	}
+	buf, packet, err := decodeUDPInternal(input, nil, readBytes, cfg)
 	return len(buf), packet, err
 }
 
@@ -272,7 +333,7 @@ func EncodePacket(packet *Packet) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer []byte) ([]byte, *DecodedTCP, error) {
+func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer []byte, config *DecodeConfig) ([]byte, *DecodedTCP, error) {
 	const headerSize = 8
 	var err error
 	var header []byte
@@ -334,7 +395,7 @@ func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer [
 		buffer = inputBuffer[:packetSize]
 	}
 
-	reader := newByteReader(bytes.NewReader(buffer[headerSize:]))
+	reader := newByteReader(buffer[headerSize:], config.IoElementsAlloc == OnHeap)
 
 	packet := &DecodedTCP{
 		Packet: &Packet{},
@@ -362,7 +423,7 @@ func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer [
 	return buffer, packet, nil
 }
 
-func decodeUDPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer []byte) ([]byte, *DecodedUDP, error) {
+func decodeUDPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer []byte, config *DecodeConfig) ([]byte, *DecodedUDP, error) {
 	const headerSize = 5
 	var err error
 	var header []byte
@@ -419,7 +480,7 @@ func decodeUDPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer [
 		buffer = inputBuffer[:packetSize]
 	}
 
-	reader := newByteReader(bytes.NewReader(buffer[headerSize:]))
+	reader := newByteReader(buffer[headerSize:], config.IoElementsAlloc == OnHeap)
 
 	avlPacketId, err := reader.ReadUInt8BE()
 	if err != nil {
