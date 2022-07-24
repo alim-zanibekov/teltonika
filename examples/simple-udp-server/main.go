@@ -21,6 +21,8 @@ import (
 	"time"
 )
 
+var decodeConfig = &teltonika.DecodeConfig{IoElementsAlloc: teltonika.OnReadBuffer}
+
 type OnPacket func(imei string, pkt *teltonika.Packet)
 
 type UDPServer struct {
@@ -110,7 +112,7 @@ func (r *UDPServer) Run() {
 
 func (r *UDPServer) handleConnection(conn *net.UDPConn, addr *net.UDPAddr, packet []byte) {
 	logger := r.logger
-	_, res, err := teltonika.DecodeUDPFromSlice(packet)
+	_, res, err := teltonika.DecodeUDPFromSlice(packet, decodeConfig)
 	if err != nil {
 		logger.Error.Printf("[%s]: %v", addr.String(), err)
 		return

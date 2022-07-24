@@ -21,6 +21,8 @@ import (
 	"time"
 )
 
+var decodeConfig = &teltonika.DecodeConfig{IoElementsAlloc: teltonika.OnReadBuffer}
+
 type OnPacket func(imei string, pkt *teltonika.Packet)
 type OnClose func(imei string)
 type OnConnect func(imei string)
@@ -155,7 +157,7 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 
 	readBuffer := make([]byte, 1300)
 	for {
-		read, res, err := teltonika.DecodeTCPFromReaderBuf(conn, readBuffer)
+		read, res, err := teltonika.DecodeTCPFromReaderBuf(conn, readBuffer, decodeConfig)
 		if err != nil {
 			logger.Error.Printf("[%s]: %v", imei, err)
 			return
