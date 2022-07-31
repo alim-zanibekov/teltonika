@@ -388,17 +388,17 @@ goos: darwin
 goarch: amd64
 pkg: github.com/alim-zanibekov/teltonika
 cpu: Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz
-BenchmarkTCPDecode-16                                             461552              2205 ns/op             405 B/op         11 allocs/op
-BenchmarkTCPDecodeReader-16                                       537868              2227 ns/op             517 B/op         13 allocs/op
-BenchmarkUDPDecodeSlice-16                                        959641              1098 ns/op            1348 B/op         38 allocs/op
-BenchmarkUDPDecodeReader-16                                       898640              1159 ns/op            1551 B/op         40 allocs/op
-BenchmarkTCPDecodeAllocElementsOnReadBuffer-16                    551418              1968 ns/op             383 B/op          5 allocs/op
-BenchmarkTCPDecodeReaderAllocElementsOnReadBuffer-16              548632              2066 ns/op             498 B/op          7 allocs/op
-BenchmarkUDPDecodeSliceAllocElementsOnReadBuffer-16              1681646               656.9 ns/op          1265 B/op          6 allocs/op
-BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer-16             1655564               809.5 ns/op          1469 B/op          8 allocs/op
-BenchmarkEncode-16                                                461865              3337 ns/op            4317 B/op         15 allocs/op
+BenchmarkTCPDecode-16                                             542722              1982 ns/op             405 B/op         11 allocs/op
+BenchmarkTCPDecodeReader-16                                       524685              2034 ns/op             517 B/op         13 allocs/op
+BenchmarkUDPDecodeSlice-16                                       1000000              1022 ns/op            1350 B/op         38 allocs/op
+BenchmarkUDPDecodeReader-16                                      1115318              1106 ns/op            1551 B/op         40 allocs/op
+BenchmarkTCPDecodeAllocElementsOnReadBuffer-16                    574172              1932 ns/op             382 B/op          5 allocs/op
+BenchmarkTCPDecodeReaderAllocElementsOnReadBuffer-16              618633              1955 ns/op             498 B/op          7 allocs/op
+BenchmarkUDPDecodeSliceAllocElementsOnReadBuffer-16              1876750               634.1 ns/op          1267 B/op          6 allocs/op
+BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer-16             1657054               712.0 ns/op          1469 B/op          8 allocs/op
+BenchmarkEncode-16                                               7849704               145.8 ns/op            36 B/op          1 allocs/op
 PASS
-ok      github.com/alim-zanibekov/teltonika     13.136s
+ok      github.com/alim-zanibekov/teltonika     14.699s
 ```
 
 As you can see from the results, passing the `&teltonika.DecodeConfig{teltonika.OnReadBuffer}`
