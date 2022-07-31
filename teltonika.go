@@ -7,8 +7,6 @@
 package teltonika
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -230,9 +228,6 @@ func EncodePacket(packet *Packet) ([]byte, error) {
 		return nil, fmt.Errorf("codec id %X encoding is not supported", packet.CodecID)
 	}
 
-	buffer := bytes.Buffer{}
-	writer := bufio.NewWriter(&buffer)
-
 	commandCount := len(packet.Messages)
 	dataSize := 3
 	for _, command := range packet.Messages {
@@ -245,33 +240,28 @@ func EncodePacket(packet *Packet) ([]byte, error) {
 		}
 	}
 
-	var err error
+	buf := make([]byte, dataSize+12)
+	shift := 0
 
-	if err = binary.Write(writer, binary.BigEndian, uint32(0)); err != nil {
-		return nil, err
-	}
+	binary.BigEndian.PutUint32(buf, 0)
+	shift = 4
 
-	if err = binary.Write(writer, binary.BigEndian, uint32(dataSize)); err != nil {
-		return nil, err
-	}
+	binary.BigEndian.PutUint32(buf[shift:], uint32(dataSize))
+	shift += 4
 
-	if err = binary.Write(writer, binary.BigEndian, uint8(packet.CodecID)); err != nil {
-		return nil, err
-	}
+	buf[shift] = uint8(packet.CodecID)
+	shift += 1
 
-	if err = binary.Write(writer, binary.BigEndian, uint8(commandCount)); err != nil {
-		return nil, err
-	}
+	buf[shift] = uint8(commandCount)
+	shift += 1
 
 	for _, message := range packet.Messages {
 		size := len(message.Text)
 		if !isMessageTypeSupported(uint8(message.Type)) {
 			return nil, fmt.Errorf("message type %X is not supported", message.Type)
 		}
-
-		if err = binary.Write(writer, binary.BigEndian, uint8(message.Type)); err != nil {
-			return nil, err
-		}
+		buf[shift] = uint8(message.Type)
+		shift += 1
 
 		if packet.CodecID == Codec14 {
 			size += 8
@@ -281,16 +271,15 @@ func EncodePacket(packet *Packet) ([]byte, error) {
 			size += 4
 		}
 
-		if err = binary.Write(writer, binary.BigEndian, uint32(size)); err != nil {
-			return nil, err
-		}
+		binary.BigEndian.PutUint32(buf[shift:], uint32(size))
+		shift += 4
 
 		if packet.CodecID == Codec13 {
-			if err = binary.Write(writer, binary.BigEndian, message.Timestamp); err != nil {
-				return nil, err
-			}
+			binary.BigEndian.PutUint32(buf[shift:], message.Timestamp)
+			shift += 4
 		} else if packet.CodecID == Codec14 {
 			var imei []byte
+			var err error
 			if (len(message.Imei) % 2) != 0 {
 				imei, err = hex.DecodeString("0" + message.Imei)
 			} else {
@@ -301,36 +290,23 @@ func EncodePacket(packet *Packet) ([]byte, error) {
 				return nil, err
 			}
 
-			if err = binary.Write(writer, binary.BigEndian, binary.BigEndian.Uint64(imei)); err != nil {
-				return nil, err
-			}
+			copy(buf[shift:], imei[:8])
+			shift += 8
 		}
 
-		if _, err = writer.Write([]byte(message.Text)); err != nil {
-			return nil, err
-		}
+		copy(buf[shift:], message.Text)
+		shift += len(message.Text)
 	}
 
-	if err = binary.Write(writer, binary.BigEndian, uint8(commandCount)); err != nil {
-		return nil, err
-	}
+	buf[shift] = uint8(commandCount)
+	shift += 1
 
-	if err = writer.Flush(); err != nil {
-		return nil, err
-	}
+	crc := Crc16IBM(buf[8:shift])
 
-	toCrc := buffer.Bytes()[8:]
-	crc := Crc16IBM(toCrc)
+	binary.BigEndian.PutUint32(buf[shift:], uint32(crc))
+	shift += 4
 
-	if err = binary.Write(writer, binary.BigEndian, uint32(crc)); err != nil {
-		return nil, err
-	}
-
-	if err = writer.Flush(); err != nil {
-		return nil, err
-	}
-
-	return buffer.Bytes(), nil
+	return buf, nil
 }
 
 func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer []byte, config *DecodeConfig) ([]byte, *DecodedTCP, error) {
