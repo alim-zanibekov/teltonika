@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -27,7 +26,6 @@ type OnPacket func(imei string, pkt *teltonika.Packet)
 
 type UDPServer struct {
 	address     string
-	clients     sync.Map
 	logger      *Logger
 	onPacket    OnPacket
 	workerCount int
@@ -192,8 +190,9 @@ func main() {
 			res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
 			if err != nil {
 				logger.Error.Printf("http post error (%v)", err)
+			} else {
+				logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 			}
-			logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 		}
 	}()
 
