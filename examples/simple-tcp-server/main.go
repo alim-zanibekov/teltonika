@@ -186,6 +186,11 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 
 	readBuffer := make([]byte, 1300)
 	for {
+		err = conn.SetReadDeadline(time.Now().Add(time.Minute * 10))
+		if err != nil {
+			logger.Error.Printf("[%s]: %v", imei, err)
+			return
+		}
 		read, res, err := teltonika.DecodeTCPFromReaderBuf(conn, readBuffer, decodeConfig)
 		if err != nil {
 			logger.Error.Printf("[%s]: %v", imei, err)
@@ -253,14 +258,18 @@ func main() {
 		Error: log.New(os.Stdout, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 
+	server := NewTCPServerLogger(address, logger)
+
 	handler := http.NewServeMux()
 
-	server := NewTCPServerLogger(address, logger)
+	respChan := sync.Map{}
 
 	handler.HandleFunc("/cmd", func(w http.ResponseWriter, r *http.Request) {
 		params := r.URL.Query()
 		imei := params.Get("imei")
-		cmd := params.Get("cmd")
+		buf := make([]byte, 512)
+		n, _ := r.Body.Read(buf)
+		cmd := string(buf[:n])
 
 		packet := &teltonika.Packet{
 			CodecID:  teltonika.Codec12,
@@ -268,11 +277,44 @@ func main() {
 			Messages: []teltonika.Message{{Type: teltonika.TypeCommand, Text: strings.TrimSpace(cmd)}},
 		}
 
-		err := server.SendPacket(imei, packet)
-		if err != nil {
+		result := make(chan *teltonika.Message, 1)
+
+		for {
+			if _, loaded := respChan.LoadOrStore(imei, result); !loaded {
+				break
+			}
+			time.Sleep(time.Millisecond * 500)
+		}
+
+		defer func() {
+			close(result)
+			respChan.Delete(imei)
+		}()
+
+		if err := server.SendPacket(imei, packet); err != nil {
 			logger.Error.Printf("send packet error (%v)", err)
+			_, err = w.Write([]byte(err.Error() + "\n"))
+			if err != nil {
+				logger.Error.Printf("http write error (%v)", err)
+			} else {
+				w.WriteHeader(400)
+			}
 		} else {
 			logger.Info.Printf("command %s sent to %s", cmd, imei)
+			ticker := time.NewTimer(time.Second * 10)
+			defer ticker.Stop()
+
+			select {
+			case msg := <-result:
+				_, err = w.Write([]byte(msg.Text + "\n"))
+			case <-ticker.C:
+				_, err = w.Write([]byte("tracker response timeout exceeded\n"))
+			}
+			if err != nil {
+				logger.Error.Printf("http write error (%v)", err)
+			} else {
+				w.WriteHeader(200)
+			}
 		}
 	})
 
@@ -286,18 +328,22 @@ func main() {
 		w.WriteHeader(200)
 	})
 
-	type WPacket struct {
-		Imei string
-		Pkt  *teltonika.Packet
-	}
-
-	out := make(chan *WPacket, 1000)
-
-	go func() {
-		for msg := range out {
-			jsonValue := buildJsonPacket(msg.Imei, msg.Pkt)
+	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
+		if pkt.Messages != nil && len(pkt.Messages) > 0 {
+			ch, ok := respChan.Load(imei)
+			if ok {
+				select {
+				case ch.(chan *teltonika.Message) <- &pkt.Messages[0]:
+				}
+			}
+		}
+		if pkt.Data == nil {
+			return
+		}
+		go func() {
+			jsonValue := buildJsonPacket(imei, pkt)
 			if jsonValue == nil {
-				continue
+				return
 			}
 			res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
 			if err != nil {
@@ -305,16 +351,11 @@ func main() {
 			} else {
 				logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 			}
-		}
-	}()
-
-	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
-		if pkt.Data != nil {
-			out <- &WPacket{imei, pkt}
-		}
+		}()
 	})
 
 	go server.Run()
+
 	logger.Info.Println("http server listening at " + httpAddress)
 	err := http.ListenAndServe(httpAddress, handler)
 	if err != nil {
