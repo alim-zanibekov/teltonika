@@ -17,14 +17,14 @@ Run server
 
 ```shell
 ./tcp-server -h # help
-./tcp-server -address '127.0.0.1:8080'
+./tcp-server -address '127.0.0.1:8080' -http '127.0.0.1:8081'
 ```
 
 Run client
 
 ```shell
 ./client -h # help
-./client -address '127.0.0.1:8080' -http '127.0.0.1:8081' -mode tcp # mode: tcp or udp
+./client -address '127.0.0.1:8080' -mode tcp # mode: tcp or udp
 ```
 
 Output
