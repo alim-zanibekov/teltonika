@@ -72,11 +72,14 @@ HTTP response (addr - imei)
 127.0.0.1:62548 - 354017118805718
 ```
 
-Send `deleterecords` command (for example [FMA110 command list](https://wiki.teltonika-gps.com/view/FMA110_SMS/GPRS_command_list)):
+Send `deleterecords` command (for
+example [FMB125 command list](https://wiki.teltonika-gps.com/view/FMB125_SMS/GPRS_Commands)):
 
 ```bash
-curl "http://localhost:8081/cmd?imei=354017118805718&cmd=deleterecords"
+curl "http://localhost:8081/cmd?imei=354017118805718" -d "deleterecords"
 ```
+
+HTTP response: `All records are erased`
 
 Server logs
 
