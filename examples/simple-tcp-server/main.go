@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +115,15 @@ func (r *TCPServer) SendPacket(imei string, packet *teltonika.Packet) error {
 	return nil
 }
 
+func (r *TCPServer) ListClients() []*TCPClient {
+	clients := make([]*TCPClient, 0, 10)
+	r.clients.Range(func(key, value any) bool {
+		clients = append(clients, value.(*TCPClient))
+		return true
+	})
+	return clients
+}
+
 func (r *TCPServer) handleConnection(conn net.Conn) {
 	logger := r.logger
 	client := &TCPClient{conn, ""}
@@ -124,6 +135,7 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		if r.onClose != nil && imei != "" {
 			r.onClose(imei)
 		}
+		r.clients.Delete(imei)
 		err := conn.Close()
 		if err != nil {
 			logger.Error.Printf("[%s]: %v", addr, err)
@@ -138,7 +150,19 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		logger.Error.Printf("[%s]: %v", addr, err)
 		return
 	}
-	imei = hex.EncodeToString(buf[:size])
+	if size < 2 {
+		logger.Error.Printf("[%s]: invalid first message")
+		return
+	}
+	imeiLen := int(binary.BigEndian.Uint16(buf[:2]))
+	buf = buf[2:]
+
+	if len(buf) < imeiLen {
+		logger.Error.Printf("[%s]: invalid imei size")
+		return
+	}
+
+	imei = strings.TrimSpace(string(buf[:imeiLen]))
 	client.imei = imei
 
 	if r.onConnect != nil {
@@ -211,9 +235,11 @@ func buildJsonPacket(imei string, pkt *teltonika.Packet) []byte {
 }
 
 func main() {
+	var httpAddress string
 	var address string
 	var outHook string
 	flag.StringVar(&address, "address", "0.0.0.0:8080", "server address")
+	flag.StringVar(&httpAddress, "http", "0.0.0.0:8081", "http server address")
 	flag.StringVar(&outHook, "hook", "http://localhost:5000/api/v1/metric", "output hook")
 	flag.Parse()
 
@@ -221,6 +247,39 @@ func main() {
 		Info:  log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime),
 		Error: log.New(os.Stdout, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile),
 	}
+
+	handler := http.NewServeMux()
+
+	server := NewTCPServerLogger(address, logger)
+
+	handler.HandleFunc("/cmd", func(w http.ResponseWriter, r *http.Request) {
+		params := r.URL.Query()
+		imei := params.Get("imei")
+		cmd := params.Get("cmd")
+
+		packet := &teltonika.Packet{
+			CodecID:  teltonika.Codec12,
+			Data:     nil,
+			Messages: []teltonika.Message{{Type: teltonika.TypeCommand, Text: strings.TrimSpace(cmd)}},
+		}
+
+		err := server.SendPacket(imei, packet)
+		if err != nil {
+			logger.Error.Printf("send packet error (%v)", err)
+		} else {
+			logger.Info.Printf("command %s sent to %s", cmd, imei)
+		}
+	})
+
+	handler.HandleFunc("/list-clients", func(w http.ResponseWriter, r *http.Request) {
+		for _, client := range server.ListClients() {
+			_, err := w.Write([]byte(client.conn.RemoteAddr().String() + " - " + client.imei + "\n"))
+			if err != nil {
+				return
+			}
+		}
+		w.WriteHeader(200)
+	})
 
 	type WPacket struct {
 		Imei string
@@ -235,16 +294,14 @@ func main() {
 			if jsonValue == nil {
 				continue
 			}
-
 			res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
 			if err != nil {
 				logger.Error.Printf("http post error (%v)", err)
+			} else {
+				logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 			}
-			logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 		}
 	}()
-
-	server := NewTCPServerLogger(address, logger)
 
 	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
 		if pkt.Data != nil {
@@ -252,5 +309,10 @@ func main() {
 		}
 	})
 
-	server.Run()
+	go server.Run()
+	logger.Info.Println("http server listening at " + httpAddress)
+	err := http.ListenAndServe(httpAddress, handler)
+	if err != nil {
+		logger.Error.Printf("http listen error (%v)", err)
+	}
 }
