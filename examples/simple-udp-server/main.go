@@ -173,35 +173,24 @@ func main() {
 		Error: log.New(os.Stdout, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 
-	type WPacket struct {
-		Imei string
-		Pkt  *teltonika.Packet
-	}
+	server := NewUDPServerLogger(address, 20, logger)
 
-	out := make(chan *WPacket, 1000)
-
-	go func() {
-		for msg := range out {
-			jsonValue := buildJsonPacket(msg.Imei, msg.Pkt)
+	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
+		if pkt.Data == nil {
+			return
+		}
+		go func() {
+			jsonValue := buildJsonPacket(imei, pkt)
 			if jsonValue == nil {
-				continue
+				return
 			}
-
 			res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
 			if err != nil {
 				logger.Error.Printf("http post error (%v)", err)
 			} else {
 				logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
 			}
-		}
-	}()
-
-	server := NewUDPServerLogger(address, 20, logger)
-
-	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
-		if pkt.Data != nil {
-			out <- &WPacket{imei, pkt}
-		}
+		}()
 	})
 
 	server.Run()
