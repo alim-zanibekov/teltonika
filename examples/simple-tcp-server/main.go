@@ -135,7 +135,12 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		if r.onClose != nil && imei != "" {
 			r.onClose(imei)
 		}
-		r.clients.Delete(imei)
+		if imei != "" {
+			logger.Info.Printf("[%s]: disconnected", imei)
+			r.clients.Delete(imei)
+		} else {
+			logger.Info.Printf("[%s]: disconnected", addr)
+		}
 		err := conn.Close()
 		if err != nil {
 			logger.Error.Printf("[%s]: %v", addr, err)
