@@ -98,7 +98,7 @@ type Message struct {
 	Timestamp uint32      `json:"timestamp,omitempty"` // codec 13 else 0
 	Type      MessageType `json:"type"`
 	Imei      string      `json:"imei,omitempty"` // codec 14 else ""
-	Text      string      `json:"command"`
+	Text      string      `json:"text"`
 }
 
 // DecodeConfig optional configuration that can be passed in all Decode* functions (last param).
