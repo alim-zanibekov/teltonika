@@ -11,23 +11,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"flag"
-	"github.com/alim-zanibekov/teltonika"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/alim-zanibekov/teltonika"
 )
 
 var decodeConfig = &teltonika.DecodeConfig{IoElementsAlloc: teltonika.OnReadBuffer}
 
-type OnPacket func(imei string, pkt *teltonika.Packet)
+type Logger struct {
+	Info  *log.Logger
+	Error *log.Logger
+}
 
 type UDPServer struct {
 	address     string
 	logger      *Logger
-	onPacket    OnPacket
+	OnPacket    func(imei string, pkt *teltonika.Packet)
 	workerCount int
 }
 
@@ -40,40 +45,25 @@ func NewUDPServerLogger(address string, workerCount int, logger *Logger) *UDPSer
 	return &UDPServer{address: address, workerCount: workerCount, logger: logger}
 }
 
-type Logger struct {
-	Info  *log.Logger
-	Error *log.Logger
-}
-
-func (r *UDPServer) OnPacket(handler OnPacket) {
-	r.onPacket = handler
-}
-
-func (r *UDPServer) Run() {
+func (r *UDPServer) Run() error {
 	logger := r.logger
 	hostStr, portStr, err := net.SplitHostPort(r.address)
 	if err != nil {
-		logger.Error.Println(err.Error())
-		os.Exit(1)
+		return fmt.Errorf("split host and port error (%v)", err)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		logger.Error.Println(err.Error())
-		os.Exit(1)
+		return fmt.Errorf("port parse error (%v)", err)
 	}
 	ip := net.ParseIP(hostStr)
 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: ip, Port: port, Zone: ""})
 	if err != nil {
-		logger.Error.Println(err.Error())
-		os.Exit(1)
+		return fmt.Errorf("listen udp error (%v)", err)
 	}
 
-	defer func(udpConn *net.UDPConn) {
-		err := udpConn.Close()
-		if err != nil {
-			logger.Error.Println(err.Error())
-		}
-	}(udpConn)
+	defer func() {
+		_ = udpConn.Close()
+	}()
 
 	logger.Info.Printf("udp listening at %s", hostStr)
 
@@ -81,7 +71,9 @@ func (r *UDPServer) Run() {
 		buffer []byte
 		addr   *net.UDPAddr
 	}
+
 	jobs := make(chan job, r.workerCount)
+	defer close(jobs)
 
 	worker := func(conn *net.UDPConn) {
 		for j := range jobs {
@@ -97,8 +89,7 @@ func (r *UDPServer) Run() {
 		buf := make([]byte, 1300)
 		n, addr, err := udpConn.ReadFromUDP(buf)
 		if err != nil {
-			logger.Error.Println(err.Error())
-			os.Exit(1)
+			return fmt.Errorf("udp read packet error (%v)", err)
 		}
 
 		packet := make([]byte, n)
@@ -110,29 +101,54 @@ func (r *UDPServer) Run() {
 
 func (r *UDPServer) handleConnection(conn *net.UDPConn, addr *net.UDPAddr, packet []byte) {
 	logger := r.logger
+	client := addr.String()
+
 	_, res, err := teltonika.DecodeUDPFromSlice(packet, decodeConfig)
 	if err != nil {
-		logger.Error.Printf("[%s]: %v", addr.String(), err)
+		logger.Error.Printf("[%s]: packet decode error (%v)", client, err)
 		return
 	}
 
 	if res.Response != nil {
-		_, err = conn.WriteToUDP(res.Response, addr)
-		if err != nil {
-			logger.Error.Printf("[%s]: %v", addr.String(), err)
+		if _, err = conn.WriteToUDP(res.Response, addr); err != nil {
+			logger.Error.Printf("[%s]: error writing response (%v)", client, err)
 			return
 		}
 	}
+
 	logger.Info.Printf("[%s]: message: %s", addr.String(), hex.EncodeToString(packet))
 	jsonData, err := json.Marshal(res.Packet)
 	if err != nil {
-		logger.Error.Printf("[%s]: %v", addr.String(), err)
+		logger.Error.Printf("[%s]: decoder result marshaling error (%v)", client, err)
 	}
-	logger.Info.Printf("[%s]: decoded: %s", addr.String(), string(jsonData))
+	logger.Info.Printf("[%s]: decoded: %s", client, string(jsonData))
 
-	if r.onPacket != nil {
-		r.onPacket(res.Imei, res.Packet)
+	if r.OnPacket != nil {
+		r.OnPacket(res.Imei, res.Packet)
 	}
+}
+
+func main() {
+	var address string
+	var outHook string
+	flag.StringVar(&address, "address", "0.0.0.0:8080", "server address")
+	flag.StringVar(&outHook, "hook", "http://localhost:5000/api/v1/metric", "output hook")
+	flag.Parse()
+
+	logger := &Logger{
+		Info:  log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime),
+		Error: log.New(os.Stdout, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile),
+	}
+
+	server := NewUDPServerLogger(address, 20, logger)
+
+	server.OnPacket = func(imei string, pkt *teltonika.Packet) {
+		if pkt.Data != nil {
+			go hookSend(outHook, imei, pkt, logger)
+		}
+	}
+
+	panic(server.Run())
 }
 
 func buildJsonPacket(imei string, pkt *teltonika.Packet) []byte {
@@ -161,37 +177,15 @@ func buildJsonPacket(imei string, pkt *teltonika.Packet) []byte {
 	return jsonValue
 }
 
-func main() {
-	var address string
-	var outHook string
-	flag.StringVar(&address, "address", "0.0.0.0:8080", "server address")
-	flag.StringVar(&outHook, "hook", "http://localhost:5000/api/v1/metric", "output hook")
-	flag.Parse()
-
-	logger := &Logger{
-		Info:  log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime),
-		Error: log.New(os.Stdout, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile),
+func hookSend(outHook string, imei string, pkt *teltonika.Packet, logger *Logger) {
+	jsonValue := buildJsonPacket(imei, pkt)
+	if jsonValue == nil {
+		return
 	}
-
-	server := NewUDPServerLogger(address, 20, logger)
-
-	server.OnPacket(func(imei string, pkt *teltonika.Packet) {
-		if pkt.Data == nil {
-			return
-		}
-		go func() {
-			jsonValue := buildJsonPacket(imei, pkt)
-			if jsonValue == nil {
-				return
-			}
-			res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
-			if err != nil {
-				logger.Error.Printf("http post error (%v)", err)
-			} else {
-				logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
-			}
-		}()
-	})
-
-	server.Run()
+	res, err := http.Post(outHook, "application/json", bytes.NewBuffer(jsonValue))
+	if err != nil {
+		logger.Error.Printf("http post error (%v)", err)
+	} else {
+		logger.Info.Printf("packet sent to output hook, status: %s", res.Status)
+	}
 }
