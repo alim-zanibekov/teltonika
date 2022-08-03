@@ -52,8 +52,8 @@ INFO: 2022/07/10 10:29:53 http server listening at 127.0.0.1:8081
 INFO: 2022/07/10 10:29:53 tcp server listening at 127.0.0.1:8080
 INFO: 2022/07/10 10:30:08 [127.0.0.1:53840]: connected
 INFO: 2022/07/10 10:31:32 [127.0.0.1:53840]: imei - 354017118805718
-INFO: 2022/07/10 10:31:57 [111111]: message: 000000000000003608010000016b40d8ea30010000000000000000000000000000000105021503010101425e0f01f10000601a014e0000000000000000010000c7cf
-INFO: 2022/07/10 10:31:57 [111111]: decoded: {"codecId":8,"data":[{"timestampMs":1560161086000,"lng":0,"lat":0,"altitude":0,"angle":0,"event_id":1,"speed":0,"satellites":0,"priority":1,"generationType":255,"elements":[{"id":21,"value":"Aw=="},{"id":1,"value":"AQ=="},{"id":66,"value":"Xg8="},{"id":241,"value":"AABgGg=="},{"id":78,"value":"AAAAAAAAAAA="}]}]}
+INFO: 2022/07/10 10:31:57 [354017118805718]: message: 000000000000003608010000016b40d8ea30010000000000000000000000000000000105021503010101425e0f01f10000601a014e0000000000000000010000c7cf
+INFO: 2022/07/10 10:31:57 [354017118805718]: decoded: {"codecId":8,"data":[{"timestampMs":1560161086000,"lng":0,"lat":0,"altitude":0,"angle":0,"event_id":1,"speed":0,"satellites":0,"priority":1,"generationType":255,"elements":[{"id":21,"value":"Aw=="},{"id":1,"value":"AQ=="},{"id":66,"value":"Xg8="},{"id":241,"value":"AABgGg=="},{"id":78,"value":"AAAAAAAAAAA="}]}]}
 ```
 
 ---
