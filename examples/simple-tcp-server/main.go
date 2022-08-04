@@ -38,7 +38,7 @@ type TrackersHub interface {
 
 type TCPServer struct {
 	address   string
-	clients   sync.Map
+	clients   *sync.Map
 	logger    *Logger
 	OnPacket  func(imei string, pkt *teltonika.Packet)
 	OnClose   func(imei string)
@@ -52,11 +52,11 @@ type TCPClient struct {
 
 //goland:noinspection GoUnusedExportedFunction
 func NewTCPServer(address string) *TCPServer {
-	return &TCPServer{address: address, logger: &Logger{log.Default(), log.Default()}}
+	return &TCPServer{address: address, logger: &Logger{log.Default(), log.Default()}, clients: &sync.Map{}}
 }
 
 func NewTCPServerLogger(address string, logger *Logger) *TCPServer {
-	return &TCPServer{address: address, logger: logger}
+	return &TCPServer{address: address, logger: logger, clients: &sync.Map{}}
 }
 
 func (r *TCPServer) Run() error {
@@ -122,7 +122,7 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 
 	addr := conn.RemoteAddr().String()
 
-	defer func(conn net.Conn) {
+	defer func() {
 		if r.OnClose != nil && imei != "" {
 			r.OnClose(imei)
 		}
@@ -136,12 +136,12 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		if err := conn.Close(); err != nil {
 			logger.Error.Printf("[%s]: connection close error (%v)", addr, err)
 		}
-	}(conn)
+	}()
 
 	logger.Info.Printf("[%s]: connected", addr)
 
-	buf := make([]byte, 100)
-	size, err := conn.Read(buf) // Read imei
+	buf := make([]byte, 1024)
+	size, err := conn.Read(buf)
 	if err != nil {
 		logger.Error.Printf("[%s]: connection read error (%v)", addr, err)
 		return
@@ -159,6 +159,12 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 	}
 
 	imei = strings.TrimSpace(string(buf[:imeiLen]))
+
+	if imei == "" {
+		logger.Error.Printf("[%s]: invalid imei '%s'", addr, imei)
+		return
+	}
+
 	client.imei = imei
 
 	if r.OnConnect != nil {
@@ -249,6 +255,15 @@ func (hs *HTTPServer) WriteMessage(imei string, message *teltonika.Message) {
 	}
 }
 
+func (hs *HTTPServer) ClientDisconnected(imei string) {
+	ch, ok := hs.respChan.Load(imei)
+	if ok {
+		select {
+		case ch.(chan *teltonika.Message) <- nil:
+		}
+	}
+}
+
 func (hs *HTTPServer) listClients(w http.ResponseWriter, _ *http.Request) {
 	for _, client := range hs.hub.ListClients() {
 		_, err := w.Write([]byte(client.conn.RemoteAddr().String() + " - " + client.imei + "\n"))
@@ -295,12 +310,16 @@ func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		logger.Info.Printf("command '%s' sent to '%s'", cmd, imei)
-		ticker := time.NewTimer(time.Second * 90)
+		ticker := time.NewTimer(time.Minute * 3)
 		defer ticker.Stop()
 
 		select {
 		case msg := <-result:
-			_, err = w.Write([]byte(msg.Text + "\n"))
+			if msg != nil {
+				_, err = w.Write([]byte(msg.Text + "\n"))
+			} else {
+				_, err = w.Write([]byte("tracker disconnected\n"))
+			}
 		case <-ticker.C:
 			_, err = w.Write([]byte("tracker response timeout exceeded\n"))
 		}
@@ -337,6 +356,10 @@ func main() {
 		if pkt.Data != nil {
 			go hookSend(outHook, imei, pkt, logger)
 		}
+	}
+
+	serverTcp.OnClose = func(imei string) {
+		serverHttp.ClientDisconnected(imei)
 	}
 
 	go func() {
