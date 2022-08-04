@@ -271,7 +271,6 @@ func (hs *HTTPServer) listClients(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
-	w.WriteHeader(200)
 }
 
 func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
@@ -302,11 +301,10 @@ func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
 
 	if err := hs.hub.SendPacket(imei, packet); err != nil {
 		logger.Error.Printf("send packet error (%v)", err)
+		w.WriteHeader(http.StatusBadRequest)
 		_, err = w.Write([]byte(err.Error() + "\n"))
 		if err != nil {
 			logger.Error.Printf("http write error (%v)", err)
-		} else {
-			w.WriteHeader(400)
 		}
 	} else {
 		logger.Info.Printf("command '%s' sent to '%s'", cmd, imei)
@@ -318,16 +316,16 @@ func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
 			if msg != nil {
 				_, err = w.Write([]byte(msg.Text + "\n"))
 			} else {
+				w.WriteHeader(http.StatusServiceUnavailable)
 				_, err = w.Write([]byte("tracker disconnected\n"))
 			}
 		case <-ticker.C:
+			w.WriteHeader(http.StatusGatewayTimeout)
 			_, err = w.Write([]byte("tracker response timeout exceeded\n"))
 		}
 
 		if err != nil {
 			logger.Error.Printf("http write error (%v)", err)
-		} else {
-			w.WriteHeader(200)
 		}
 	}
 }
