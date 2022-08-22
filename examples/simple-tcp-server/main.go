@@ -108,7 +108,7 @@ func (r *TCPServer) SendPacket(imei string, packet *teltonika.Packet) error {
 
 func (r *TCPServer) ListClients() []*TCPClient {
 	clients := make([]*TCPClient, 0, 10)
-	r.clients.Range(func(key, value any) bool {
+	r.clients.Range(func(key, value interface{}) bool {
 		clients = append(clients, value.(*TCPClient))
 		return true
 	})
