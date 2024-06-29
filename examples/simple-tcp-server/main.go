@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/alim-zanibekov/teltonika"
+	"github.com/alim-zanibekov/teltonika/ioelements"
 )
 
 var decodeConfig = &teltonika.DecodeConfig{IoElementsAlloc: teltonika.OnReadBuffer}
@@ -37,12 +39,14 @@ type TrackersHub interface {
 }
 
 type TCPServer struct {
-	address   string
-	clients   *sync.Map
-	logger    *Logger
-	OnPacket  func(imei string, pkt *teltonika.Packet)
-	OnClose   func(imei string)
-	OnConnect func(imei string)
+	address      string
+	clients      *sync.Map
+	logger       *Logger
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	OnPacket     func(imei string, pkt *teltonika.Packet)
+	OnClose      func(imei string)
+	OnConnect    func(imei string)
 }
 
 type TCPClient struct {
@@ -52,11 +56,17 @@ type TCPClient struct {
 
 //goland:noinspection GoUnusedExportedFunction
 func NewTCPServer(address string) *TCPServer {
-	return &TCPServer{address: address, logger: &Logger{log.Default(), log.Default()}, clients: &sync.Map{}}
+	return &TCPServer{
+		address: address, logger: &Logger{log.Default(), log.Default()}, clients: &sync.Map{},
+		readTimeout: time.Minute * 5, writeTimeout: time.Minute * 5,
+	}
 }
 
 func NewTCPServerLogger(address string, logger *Logger) *TCPServer {
-	return &TCPServer{address: address, logger: logger, clients: &sync.Map{}}
+	return &TCPServer{
+		address: address, logger: logger, clients: &sync.Map{},
+		readTimeout: time.Minute * 5, writeTimeout: time.Minute * 5,
+	}
 }
 
 func (r *TCPServer) Run() error {
@@ -118,54 +128,83 @@ func (r *TCPServer) ListClients() []*TCPClient {
 func (r *TCPServer) handleConnection(conn net.Conn) {
 	logger := r.logger
 	client := &TCPClient{conn, ""}
+	addr := conn.RemoteAddr().String()
+	logKey := addr
 	imei := ""
 
-	addr := conn.RemoteAddr().String()
+	updateReadDeadline := func() bool {
+		if err := conn.SetReadDeadline(time.Now().Add(r.readTimeout)); err != nil {
+			logger.Error.Printf("[%s]: SetReadDeadline error (%v)", logKey, err)
+			return false
+		}
+		return true
+	}
+
+	writeWithDeadline := func(data []byte) bool {
+		if err := conn.SetWriteDeadline(time.Now().Add(r.writeTimeout)); err != nil {
+			logger.Error.Printf("[%s]: SetWriteDeadline error (%v)", logKey, err)
+			return false
+		}
+		if _, err := conn.Write(data); err != nil {
+			logger.Error.Printf("[%s]: error writing response (%v)", logKey, err)
+			return false
+		}
+		return true
+	}
 
 	defer func() {
 		if r.OnClose != nil && imei != "" {
 			r.OnClose(imei)
 		}
+		logger.Info.Printf("[%s]: client disconnected", logKey)
 		if imei != "" {
-			logger.Info.Printf("[%s]: disconnected", imei)
 			r.clients.Delete(imei)
-		} else {
-			logger.Info.Printf("[%s]: disconnected", addr)
 		}
-
 		if err := conn.Close(); err != nil {
-			logger.Error.Printf("[%s]: connection close error (%v)", addr, err)
+			logger.Error.Printf("[%s]: connection close error (%v)", logKey, err)
 		}
 	}()
 
-	logger.Info.Printf("[%s]: connected", addr)
-
-	buf := make([]byte, 1024)
-	size, err := conn.Read(buf)
+	logger.Info.Printf("[%s]: connected", logKey)
+	buf := make([]byte, 256)
+	if !updateReadDeadline() {
+		return
+	}
+	size, err := conn.Read(buf[:2])
 	if err != nil {
-		logger.Error.Printf("[%s]: connection read error (%v)", addr, err)
+		logger.Error.Printf("[%s]: connection read error (%v)", logKey, err)
 		return
 	}
-	if size < 2 {
-		logger.Error.Printf("[%s]: invalid first message (read: %s)", addr, hex.EncodeToString(buf))
+	if size != 2 {
+		logger.Error.Printf("[%s]: invalid imei message (read: %s)", logKey, hex.EncodeToString(buf[:2]))
 		return
 	}
-	imeiLen := int(binary.BigEndian.Uint16(buf[:2]))
-	buf = buf[2:]
-
-	if len(buf) < imeiLen {
-		logger.Error.Printf("[%s]: invalid imei size (read: %s)", addr, hex.EncodeToString(buf))
+	imeiLen := int(binary.BigEndian.Uint16(buf))
+	if imeiLen > len(buf) {
+		logger.Error.Printf("[%s]: imei length too big (read: %s)", logKey, hex.EncodeToString(buf[:2]))
 		return
 	}
-
-	imei = strings.TrimSpace(string(buf[:imeiLen]))
+	if !updateReadDeadline() {
+		return
+	}
+	size, err = conn.Read(buf[:imeiLen])
+	if err != nil {
+		logger.Error.Printf("[%s]: connection read error (%v)", logKey, err)
+		return
+	}
+	if size < imeiLen {
+		logger.Error.Printf("[%s]: invalid read imei size (read: %s)", logKey, hex.EncodeToString(buf[:imeiLen]))
+		return
+	}
+	imei = strings.TrimSpace(string(buf))
 
 	if imei == "" {
-		logger.Error.Printf("[%s]: invalid imei '%s'", addr, imei)
+		logger.Error.Printf("[%s]: invalid imei '%s'", logKey, imei)
 		return
 	}
 
 	client.imei = imei
+	logKey = fmt.Sprintf("%s-%s", imei, addr)
 
 	if r.OnConnect != nil {
 		r.OnConnect(imei)
@@ -173,38 +212,60 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 
 	r.clients.Store(imei, client)
 
-	logger.Info.Printf("[%s]: imei - %s", addr, client.imei)
+	logger.Info.Printf("[%s]: imei - %s", logKey, client.imei)
 
-	if _, err = conn.Write([]byte{1}); err != nil {
-		logger.Error.Printf("[%s]: error writing ack (%v)", client.imei, err)
+	if !writeWithDeadline([]byte{1}) {
 		return
 	}
 
 	readBuffer := make([]byte, 1300)
+	reader := bufio.NewReader(conn)
 	for {
-		if err = conn.SetReadDeadline(time.Now().Add(time.Minute * 15)); err != nil {
-			logger.Error.Printf("[%s]: SetReadDeadline error (%v)", imei, err)
-			return
-		}
-		read, res, err := teltonika.DecodeTCPFromReaderBuf(conn, readBuffer, decodeConfig)
-		if err != nil {
-			logger.Error.Printf("[%s]: packet decode error (%v)", imei, err)
+		if !updateReadDeadline() {
 			return
 		}
 
-		if res.Response != nil {
-			if _, err = conn.Write(res.Response); err != nil {
-				logger.Error.Printf("[%s]: error writing response (%v)", imei, err)
+		peek, err := reader.Peek(1)
+		if err != nil {
+			logger.Error.Printf("[%s]: peek error (%v)", logKey, err)
+			return
+		}
+		if peek[0] == 0xFF { // ping packet
+			if _, err = reader.Discard(1); err != nil {
+				logger.Error.Printf("[%s]: reader discard error (%v)", logKey, err)
 				return
 			}
+			logger.Info.Printf("[%s]: received ping", logKey)
+			continue
+		}
+		read, res, err := teltonika.DecodeTCPFromReaderBuf(reader, readBuffer, decodeConfig)
+		if err != nil {
+			logger.Error.Printf("[%s]: packet decode error (%v)", logKey, err)
+			return
 		}
 
-		logger.Info.Printf("[%s]: message: %s", imei, hex.EncodeToString(readBuffer[:read]))
+		if res.Response != nil && !writeWithDeadline(res.Response) {
+			return
+		}
+
+		logger.Info.Printf("[%s]: message: %s", logKey, hex.EncodeToString(readBuffer[:read]))
 		jsonData, err := json.Marshal(res.Packet)
 		if err != nil {
-			logger.Error.Printf("[%s]: decoder result marshaling error (%v)", imei, err)
+			logger.Error.Printf("[%s]: marshaling error (%v)", logKey, err)
+		} else {
+			logger.Info.Printf("[%s]: decoded: %s", logKey, string(jsonData))
+			for i, data := range res.Packet.Data {
+				elements := make([]string, len(data.Elements))
+				for j, element := range data.Elements {
+					it, err := ioelements.DefaultParser().Parse("*", element.Id, element.Value)
+					if err != nil {
+						break
+					}
+					elements[j] = it.String()
+				}
+				logger.Info.Printf("[%s]: io elements [frame #%d]: %s", logKey, i, strings.Join(elements, ", "))
+			}
 		}
-		logger.Info.Printf("[%s]: decoded: %s", imei, string(jsonData))
 
 		if r.OnPacket != nil {
 			r.OnPacket(imei, res.Packet)
@@ -334,9 +395,13 @@ func main() {
 	var httpAddress string
 	var tcpAddress string
 	var outHook string
+	var readTimeout time.Duration
+	var writeTimeout time.Duration
 	flag.StringVar(&tcpAddress, "address", "0.0.0.0:8080", "tcp server address")
 	flag.StringVar(&httpAddress, "http", "0.0.0.0:8081", "http server address")
-	flag.StringVar(&outHook, "hook", "http://localhost:5000/api/v1/metric", "output hook")
+	flag.StringVar(&outHook, "hook", "", "output hook\nfor example: http://localhost:8080/push")
+	flag.DurationVar(&readTimeout, "read-timeout", time.Minute*2, "receive timeout")
+	flag.DurationVar(&writeTimeout, "write-timeout", time.Minute*2, "send timeout")
 	flag.Parse()
 
 	logger := &Logger{
@@ -347,11 +412,13 @@ func main() {
 	serverTcp := NewTCPServerLogger(tcpAddress, logger)
 	serverHttp := NewHTTPServerLogger(httpAddress, serverTcp, logger)
 
+	serverTcp.writeTimeout = writeTimeout
+	serverTcp.readTimeout = readTimeout
 	serverTcp.OnPacket = func(imei string, pkt *teltonika.Packet) {
 		if pkt.Messages != nil && len(pkt.Messages) > 0 {
 			serverHttp.WriteMessage(imei, &pkt.Messages[0])
 		}
-		if pkt.Data != nil {
+		if pkt.Data != nil && outHook != "" {
 			go hookSend(outHook, imei, pkt, logger)
 		}
 	}
