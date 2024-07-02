@@ -1,4 +1,4 @@
-// Copyright 2022 Alim Zanibekov
+// Copyright 2022-2024 Alim Zanibekov
 //
 // Use of this source code is governed by an MIT-style
 // license that can be found in the LICENSE file or at
@@ -42,10 +42,11 @@ type IOElement struct {
 }
 
 type Parser struct {
-	definitions []IOElementDefinition
+	definitions     []IOElementDefinition
+	supportedModels map[string]bool
 }
 
-var defaultParser = &Parser{ioElementDefinitions}
+var defaultParser = &Parser{ioElementDefinitions, supportedModels}
 
 func (r *IOElement) String() string {
 	switch r.Value.(type) {
@@ -58,7 +59,13 @@ func (r *IOElement) String() string {
 
 // NewParser create new Parser
 func NewParser(definitions []IOElementDefinition) *Parser {
-	return &Parser{definitions}
+	allSupportedModels := map[string]bool{}
+	for _, it := range definitions {
+		for _, model := range it.SupportedModels {
+			allSupportedModels[model] = true
+		}
+	}
+	return &Parser{definitions, allSupportedModels}
 }
 
 // DefaultParser returns default parser with IO Element definitions represented in `ioelements_dump.go` file
@@ -69,6 +76,10 @@ func DefaultParser() *Parser {
 // GetElementInfo returns full description of IO Element by its id and model name
 // If you don't know the model name, you can skip the model name check by passing '*' as the model name
 func (r *Parser) GetElementInfo(modelName string, id uint16) (*IOElementDefinition, error) {
+	if modelName != "*" && !r.supportedModels[modelName] {
+		return nil, fmt.Errorf("model '%s' is not supported", modelName)
+	}
+
 	for _, e := range r.definitions {
 		if e.Id != id {
 			continue
