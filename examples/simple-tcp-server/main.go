@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -158,6 +159,10 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 			logger.Error.Printf("[%s]: error writing response (%v)", logKey, err)
 			return false
 		}
+		// reset write deadline
+		if err := conn.SetWriteDeadline(time.Now().Add(r.writeTimeout + r.readTimeout)); err != nil {
+			logger.Error.Printf("[%s]: SetWriteDeadline error (%v)", logKey, err)
+		}
 		return true
 	}
 
@@ -169,8 +174,9 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		if imei != "" {
 			r.clients.Delete(imei)
 		}
-		if err := conn.Close(); err != nil {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			logger.Error.Printf("[%s]: connection close error (%v)", logKey, err)
+
 		}
 	}()
 
@@ -219,9 +225,22 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		r.OnConnect(imei)
 	}
 
-	r.clients.Store(imei, client)
-
 	logger.Info.Printf("[%s]: imei - %s", logKey, client.imei)
+	storedClient, loaded := r.clients.LoadOrStore(imei, client)
+	if loaded {
+		otherClient := storedClient.(*TCPClient)
+		otherAddr := otherClient.conn.RemoteAddr().String()
+
+		logger.Info.Printf("[%s]: there is another client with the same imei (%s)", logKey, otherAddr)
+		err = otherClient.conn.Close()
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			logger.Error.Printf("[%s]: other client (%s) connection close error (%v)", logKey, otherAddr, err)
+		} else {
+			logger.Info.Printf("[%s]: the connection with the other client was closed (%s)", logKey, otherAddr)
+		}
+
+		r.clients.Store(imei, client)
+	}
 
 	if !writeWithDeadline([]byte{1}) {
 		return
@@ -236,7 +255,9 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 
 		peek, err := reader.Peek(1)
 		if err != nil {
-			logger.Error.Printf("[%s]: peek error (%v)", logKey, err)
+			if !errors.Is(err, net.ErrClosed) {
+				logger.Error.Printf("[%s]: read error (%v)", logKey, err)
+			}
 			return
 		}
 		if peek[0] == 0xFF { // ping packet
