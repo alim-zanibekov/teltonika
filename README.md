@@ -8,7 +8,7 @@ and encoding/decoding commands and command responses
 Implemented Codec 8, 8E, 16 (tcp/udp) decode and Codec 12, 13, 14 encode/decode
 
 The `ioelements` package can be used to represent IO Elements in human-readable
-format, see [scripts](/scripts)
+format, see [tools](/tools)
 
 ### Example
 
