@@ -35,7 +35,7 @@ type Logger struct {
 
 type TrackersHub interface {
 	SendPacket(imei string, packet *teltonika.Packet) error
-	ListClients() []*TCPClient
+	ListClients() []*Client
 }
 
 type TCPServer struct {
@@ -44,14 +44,22 @@ type TCPServer struct {
 	logger       *Logger
 	readTimeout  time.Duration
 	writeTimeout time.Duration
+	sLock        sync.RWMutex
 	OnPacket     func(imei string, pkt *teltonika.Packet)
 	OnClose      func(imei string)
 	OnConnect    func(imei string)
 }
 
 type TCPClient struct {
-	conn net.Conn
-	imei string
+	conn        net.Conn
+	connectedAt time.Time
+	imei        string
+}
+
+type Client struct {
+	Imei        string    `json:"imei"`
+	Addr        string    `json:"addr"`
+	ConnectedAt time.Time `json:"connectedAt"`
 }
 
 //goland:noinspection GoUnusedExportedFunction
@@ -116,10 +124,11 @@ func (r *TCPServer) SendPacket(imei string, packet *teltonika.Packet) error {
 	return nil
 }
 
-func (r *TCPServer) ListClients() []*TCPClient {
-	clients := make([]*TCPClient, 0, 10)
+func (r *TCPServer) ListClients() []*Client {
+	clients := make([]*Client, 0, 10)
 	r.clients.Range(func(key, value interface{}) bool {
-		clients = append(clients, value.(*TCPClient))
+		client := value.(*TCPClient)
+		clients = append(clients, &Client{client.imei, client.conn.RemoteAddr().String(), client.connectedAt})
 		return true
 	})
 	return clients
@@ -127,7 +136,7 @@ func (r *TCPServer) ListClients() []*TCPClient {
 
 func (r *TCPServer) handleConnection(conn net.Conn) {
 	logger := r.logger
-	client := &TCPClient{conn, ""}
+	client := &TCPClient{conn, time.Now(), ""}
 	addr := conn.RemoteAddr().String()
 	logKey := addr
 	imei := ""
@@ -196,7 +205,7 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		logger.Error.Printf("[%s]: invalid read imei size (read: %s)", logKey, hex.EncodeToString(buf[:imeiLen]))
 		return
 	}
-	imei = strings.TrimSpace(string(buf))
+	imei = strings.TrimSpace(string(buf[:imeiLen]))
 
 	if imei == "" {
 		logger.Error.Printf("[%s]: invalid imei '%s'", logKey, imei)
@@ -326,11 +335,12 @@ func (hs *HTTPServer) ClientDisconnected(imei string) {
 }
 
 func (hs *HTTPServer) listClients(w http.ResponseWriter, _ *http.Request) {
-	for _, client := range hs.hub.ListClients() {
-		_, err := w.Write([]byte(client.conn.RemoteAddr().String() + " - " + client.imei + "\n"))
-		if err != nil {
-			return
-		}
+	body, _ := json.Marshal(hs.hub.ListClients())
+	w.Header().Set("Content-Type", "application/json")
+	_, err := w.Write(body)
+	if err != nil {
+		hs.logger.Error.Printf("http write error (%v)", err)
+		return
 	}
 }
 
@@ -360,10 +370,12 @@ func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
 
 	defer hs.respChan.Delete(imei)
 
+	w.Header().Set("Content-Type", "application/json")
 	if err := hs.hub.SendPacket(imei, packet); err != nil {
 		logger.Error.Printf("send packet error (%v)", err)
 		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte(err.Error() + "\n"))
+		body, _ := json.Marshal(map[string]interface{}{"error": err.Error()})
+		_, err = w.Write(body)
 		if err != nil {
 			logger.Error.Printf("http write error (%v)", err)
 		}
@@ -375,14 +387,15 @@ func (hs *HTTPServer) handleCmd(w http.ResponseWriter, r *http.Request) {
 		select {
 		case msg := <-result:
 			if msg != nil {
-				_, err = w.Write([]byte(msg.Text + "\n"))
+				body, _ := json.Marshal(map[string]interface{}{"response": msg.Text})
+				_, err = w.Write(body)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, err = w.Write([]byte("tracker disconnected\n"))
+				_, err = w.Write([]byte(`{"error":"tracker disconnected"}`))
 			}
 		case <-ticker.C:
 			w.WriteHeader(http.StatusGatewayTimeout)
-			_, err = w.Write([]byte("tracker response timeout exceeded\n"))
+			_, err = w.Write([]byte(`{"error":"tracker response timeout exceeded"}`))
 		}
 
 		if err != nil {
