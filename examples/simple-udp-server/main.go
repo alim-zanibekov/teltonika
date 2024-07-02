@@ -17,9 +17,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alim-zanibekov/teltonika"
+	"github.com/alim-zanibekov/teltonika/ioelements"
 )
 
 var decodeConfig = &teltonika.DecodeConfig{IoElementsAlloc: teltonika.OnReadBuffer}
@@ -116,12 +118,24 @@ func (r *UDPServer) handleConnection(conn *net.UDPConn, addr *net.UDPAddr, packe
 		}
 	}
 
-	logger.Info.Printf("[%s]: message: %s", addr.String(), hex.EncodeToString(packet))
+	logger.Info.Printf("[%s]: message: %s", client, hex.EncodeToString(packet))
 	jsonData, err := json.Marshal(res.Packet)
 	if err != nil {
-		logger.Error.Printf("[%s]: decoder result marshaling error (%v)", client, err)
+		logger.Error.Printf("[%s]: marshaling error (%v)", client, err)
+	} else {
+		logger.Info.Printf("[%s]: decoded: %s", client, string(jsonData))
+		for i, data := range res.Packet.Data {
+			elements := make([]string, len(data.Elements))
+			for j, element := range data.Elements {
+				it, err := ioelements.DefaultParser().Parse("*", element.Id, element.Value)
+				if err != nil {
+					break
+				}
+				elements[j] = it.String()
+			}
+			logger.Info.Printf("[%s]: io elements [frame #%d]: %s", client, i, strings.Join(elements, ", "))
+		}
 	}
-	logger.Info.Printf("[%s]: decoded: %s", client, string(jsonData))
 
 	if r.OnPacket != nil {
 		r.OnPacket(res.Imei, res.Packet)
@@ -132,7 +146,7 @@ func main() {
 	var address string
 	var outHook string
 	flag.StringVar(&address, "address", "0.0.0.0:8080", "server address")
-	flag.StringVar(&outHook, "hook", "http://localhost:5000/api/v1/metric", "output hook")
+	flag.StringVar(&outHook, "hook", "", "output hook\nfor example: http://localhost:8080/push")
 	flag.Parse()
 
 	logger := &Logger{
@@ -143,7 +157,7 @@ func main() {
 	server := NewUDPServerLogger(address, 20, logger)
 
 	server.OnPacket = func(imei string, pkt *teltonika.Packet) {
-		if pkt.Data != nil {
+		if pkt.Data != nil && outHook != "" {
 			go hookSend(outHook, imei, pkt, logger)
 		}
 	}

@@ -50,6 +50,19 @@ func main() {
 			break
 		}
 
+		if str == "ping" {
+			if mode != "tcp" {
+				fmt.Printf("ping is only supported in tcp mode\n")
+				continue
+			}
+			if _, err := conn.Write([]byte{0xFF}); err != nil {
+				fmt.Printf("send error (%v)\n", err)
+				return
+			}
+			fmt.Printf("send ping (0xFF)\n")
+			continue
+		}
+
 		packet, err := hex.DecodeString(str)
 		if err != nil {
 			fmt.Printf("unable to decode hex input (%v)\n", err)

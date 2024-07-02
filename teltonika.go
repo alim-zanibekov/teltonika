@@ -56,17 +56,19 @@ const (
 	OnReadBuffer                        // IOElement->Value = readBuffer[x:y]
 )
 
+type PacketResponse []byte
+
 type DecodedUDP struct {
-	PacketId    uint16  `json:"packetId"`
-	AvlPacketId uint8   `json:"avlPacketId"`
-	Imei        string  `json:"imei"`
-	Packet      *Packet `json:"packet"`
-	Response    []byte  `json:"response"`
+	PacketId    uint16         `json:"packetId"`
+	AvlPacketId uint8          `json:"avlPacketId"`
+	Imei        string         `json:"imei"`
+	Packet      *Packet        `json:"packet"`
+	Response    PacketResponse `json:"response"`
 }
 
 type DecodedTCP struct {
-	Packet   *Packet `json:"packet"`
-	Response []byte  `json:"response"`
+	Packet   *Packet        `json:"packet"`
+	Response PacketResponse `json:"response"`
 }
 
 type Packet struct {
@@ -89,9 +91,11 @@ type Data struct {
 	Elements       []IOElement    `json:"elements"`
 }
 
+type IOElementValue []byte
+
 type IOElement struct {
-	Id    uint16 `json:"id"`
-	Value []byte `json:"value"`
+	Id    uint16         `json:"id"`
+	Value IOElementValue `json:"value"`
 }
 
 type Message struct {
@@ -109,6 +113,24 @@ type DecodeConfig struct {
 
 var defaultDecodeConfig = &DecodeConfig{
 	IoElementsAlloc: OnHeap,
+}
+
+func (r IOElementValue) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + hex.EncodeToString(r) + `"`), nil
+}
+
+func (r IOElementValue) UnmarshalJSON(data []byte) error {
+	_, err := hex.Decode(data, r)
+	return err
+}
+
+func (r PacketResponse) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + hex.EncodeToString(r) + `"`), nil
+}
+
+func (r PacketResponse) UnmarshalJSON(data []byte) error {
+	_, err := hex.Decode(data, r)
+	return err
 }
 
 // DecodeTCPFromSlice
