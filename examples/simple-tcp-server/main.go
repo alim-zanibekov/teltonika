@@ -113,7 +113,7 @@ func (r *TCPServer) SendPacket(imei string, packet *teltonika.Packet) error {
 	}
 	client := clientRaw.(*TCPClient)
 
-	buf, err := teltonika.EncodePacket(packet)
+	buf, err := teltonika.EncodePacketTCP(packet)
 	if err != nil {
 		return err
 	}
@@ -159,10 +159,6 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 			logger.Error.Printf("[%s]: error writing response (%v)", logKey, err)
 			return false
 		}
-		// reset write deadline
-		if err := conn.SetWriteDeadline(time.Now().Add(r.writeTimeout + r.readTimeout)); err != nil {
-			logger.Error.Printf("[%s]: SetWriteDeadline error (%v)", logKey, err)
-		}
 		return true
 	}
 
@@ -176,12 +172,11 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 		}
 		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			logger.Error.Printf("[%s]: connection close error (%v)", logKey, err)
-
 		}
 	}()
 
 	logger.Info.Printf("[%s]: connected", logKey)
-	buf := make([]byte, 256)
+	buf := make([]byte, 512)
 	if !updateReadDeadline() {
 		return
 	}
@@ -287,7 +282,7 @@ func (r *TCPServer) handleConnection(conn net.Conn) {
 			for i, data := range res.Packet.Data {
 				elements := make([]string, len(data.Elements))
 				for j, element := range data.Elements {
-					it, err := ioelements.DefaultParser().Parse("*", element.Id, element.Value)
+					it, err := ioelements.DefaultDecoder().Decode("*", element.Id, element.Value)
 					if err != nil {
 						break
 					}

@@ -127,7 +127,7 @@ func (r *UDPServer) handleConnection(conn *net.UDPConn, addr *net.UDPAddr, packe
 		for i, data := range res.Packet.Data {
 			elements := make([]string, len(data.Elements))
 			for j, element := range data.Elements {
-				it, err := ioelements.DefaultParser().Parse("*", element.Id, element.Value)
+				it, err := ioelements.DefaultDecoder().Decode("*", element.Id, element.Value)
 				if err != nil {
 					break
 				}
