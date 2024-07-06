@@ -753,3 +753,55 @@ func BenchmarkEncodeUDP(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkCrc16IBMGenerateLookupTable(b *testing.B) {
+	// save results here to avoid result table allocation on the stack
+	// and possibly some optimizations.
+	results := make([][]uint16, 256)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		results[i%256] = genCrc16IBMLookupTable()
+	}
+}
+
+func BenchmarkCrc16IBMWithLookupTable(b *testing.B) {
+	benchCases := make([][]byte, 256)
+	for i := range benchCases {
+		benchCases[i] = make([]byte, 1024)
+		rand.Read(benchCases[i])
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		Crc16IBM(benchCases[i%256])
+	}
+}
+
+func BenchmarkCrc16IBMWithoutLookupTable(b *testing.B) {
+	benchCases := make([][]byte, 256)
+	for i := range benchCases {
+		benchCases[i] = make([]byte, 1024)
+		rand.Read(benchCases[i])
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		crc16IBMNoTable(benchCases[i%256])
+	}
+}
+
+func crc16IBMNoTable(data []byte) uint16 {
+	crc := uint16(0)
+	size := len(data)
+	for i := 0; i < size; i++ {
+		crc ^= uint16(data[i])
+		for j := 0; j < 8; j++ {
+			if (crc & 0x0001) == 1 {
+				crc = (crc >> 1) ^ 0xA001
+			} else {
+				crc >>= 1
+			}
+		}
+	}
+	return crc
+}

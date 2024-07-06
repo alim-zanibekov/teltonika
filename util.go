@@ -11,18 +11,32 @@ import (
 	"io"
 )
 
+func genCrc16IBMLookupTable() []uint16 {
+	table := make([]uint16, 256)
+	i := 128
+	crc := uint16(1)
+	for i > 0 {
+		if (crc & 0x0001) == 1 {
+			crc = (crc >> 1) ^ 0xA001
+		} else {
+			crc = crc >> 1
+		}
+		for j := 0; j < 255; j += i * 2 {
+			table[i+j] = crc ^ table[j]
+		}
+		i = i >> 1
+	}
+	return table
+}
+
+var crc16IBMLookupTable = genCrc16IBMLookupTable()
+
 func Crc16IBM(data []byte) uint16 {
 	crc := uint16(0)
 	size := len(data)
 	for i := 0; i < size; i++ {
-		crc ^= uint16(data[i])
-		for j := 0; j < 8; j++ {
-			if (crc & 0x0001) == 1 {
-				crc = (crc >> 1) ^ 0xA001
-			} else {
-				crc >>= 1
-			}
-		}
+		lookupIndex := (crc ^ uint16(data[i])) & 0xff
+		crc = (crc >> 8) ^ crc16IBMLookupTable[lookupIndex]
 	}
 	return crc
 }
