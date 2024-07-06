@@ -38,7 +38,7 @@ Available commands:
 ```
 
 You can generate the list yourself and use it via the `ioelements`
-package by passing it to the NewParser function.
+package by passing it to the NewDecoder function.
 
 This command loads a list of I/O element definitions for FMB920 and FMB900 without
 following links to other models, and then writes the result to a go file `my_ioelements.go`
@@ -59,8 +59,8 @@ import (
 )
 
 func main() {
-    myParser := ioelements.NewParser(ioElementDefinitions) // ioElementDefinitions from the generated ./my_ioelements.go
-    parsed, err := myParser.Parse("*", 1, []byte{1})
+    myParser := ioelements.NewDecoder(ioElementDefinitions) // ioElementDefinitions from the generated ./my_ioelements.go
+    parsed, err := myParser.Decode("*", 1, []byte{1})
     if err != nil {
         panic(err)
     }

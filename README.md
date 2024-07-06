@@ -5,7 +5,7 @@ The `teltonika` package provides an implementation of
 the library supports decoding regular messages from trackers
 and encoding/decoding commands and command responses
 
-Implemented Codec 8, 8E, 16 (tcp/udp) decode and Codec 12, 13, 14 encode/decode
+Implemented Codec 8, 8E, 16, 12, 13, 14, 15 (tcp/udp) decode/encode
 
 The `ioelements` package can be used to represent IO Elements in human-readable
 format, see [tools](/tools)
@@ -39,13 +39,13 @@ func main() {
     res, _ := json.Marshal(decoded)
     fmt.Printf("%s\n", res)
 
-    parser := ioelements.DefaultParser()
+    decoder := ioelements.DefaultDecoder()
 
     elements := make(map[int][]*ioelements.IOElement)
     for i, data := range decoded.Packet.Data {
         elements[i] = make([]*ioelements.IOElement, len(data.Elements))
         for j, element := range data.Elements {
-            elements[i][j], err = parser.Parse("*", element.Id, element.Value)
+            elements[i][j], err = decoder.Decode("*", element.Id, element.Value)
             if err != nil {
                 panic(err)
             }
@@ -79,7 +79,7 @@ func main() {
         "speed": 0,
         "satellites": 11,
         "priority": 0,
-        "generationType": 255,
+        "generationType": "Unknown",
         "elements": [
           {
             "id": 240,
@@ -222,9 +222,9 @@ type IOElement struct {
 }
 
 type Message struct {
-    Timestamp uint32      // UNIX timestamp in milliseconds (only codec 13)
+    Timestamp uint32      // UNIX timestamp in milliseconds (codecs 13,15)
     Type      MessageType // Type (Command or Response)
-    Imei      string      // Device IMEI (only codec 14)
+    Imei      string      // Device IMEI (codecs 14,15)
     Text      string      // Command or Response represented as string
 }
 
@@ -242,41 +242,48 @@ Methods:
 package teltonika
 
 // DecodeTCPFromSlice
-// decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from slice
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) tcp packet from slice
 // returns the number of bytes read from 'inputBuffer' and decoded packet or an error
 func DecodeTCPFromSlice(inputBuffer []byte, config ...*DecodeConfig) (int, *DecodedTCP, error)
 
 // DecodeTCPFromReader
-// decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from io.Reader
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) tcp packet from io.Reader
 // returns decoded packet or an error
 func DecodeTCPFromReader(input io.Reader, config ...*DecodeConfig) ([]byte, *DecodedTCP, error)
 
 // DecodeTCPFromReaderBuf
-// decode (12, 13, 14, 8, 16, or 8 extended codec) tcp packet from io.Reader
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) tcp packet from io.Reader
 // writes the read bytes to readBytes buffer (max packet size 1280 bytes)
 // returns the number of bytes read and decoded packet or an error
 func DecodeTCPFromReaderBuf(input io.Reader, readBytes []byte, config ...*DecodeConfig) (int, *DecodedTCP, error)
 
 // DecodeUDPFromSlice
-// decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from slice
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) udp packet from slice
 // returns the number of bytes read from 'inputBuffer' and decoded packet or an error
 func DecodeUDPFromSlice(inputBuffer []byte, config ...*DecodeConfig) (int, *DecodedUDP, error)
 
 // DecodeUDPFromReader
-// decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from io.Reader
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) udp packet from io.Reader
 // returns the read buffer and decoded packet or an error
 func DecodeUDPFromReader(input io.Reader, config ...*DecodeConfig) ([]byte, *DecodedUDP, error)
 
 // DecodeUDPFromReaderBuf
-// decode (12, 13, 14, 8, 16, or 8 extended codec) udp packet from io.Reader
+// decode (12, 13, 14, 15, 8, 16, or 8 extended codec) udp packet from io.Reader
 // writes read bytes to readBytes slice (max packet size 1280 bytes)
 // returns the number of bytes read and decoded packet or an error
 func DecodeUDPFromReaderBuf(input io.Reader, readBytes []byte, config ...*DecodeConfig) (int, *DecodedUDP, error)
 
-// EncodePacket
-// encode packet (12, 13, or 14 codec)
+// EncodePacketTCP
+// encode packet (12, 13, 14, 15, 8, 16, or 8 extended codec)
 // returns an array of bytes with encoded data or an error
-func EncodePacket(packet *Packet) ([]byte, error)
+// note: implementations for 8, 16, 8E are practically not needed, they are made for testing
+func EncodePacketTCP(packet *Packet) ([]byte, error)
+
+// EncodePacketUDP
+// encode packet (12, 13, 14, 15, 8, 16, or 8 extended codec)
+// returns an array of bytes with encoded data or an error
+// note: all implementations are practically not needed, they are made for testing
+func EncodePacketUDP(imei string, packetId uint16, avlPacketId uint8, packet *Packet) ([]byte, error)
 ```
 
 Package `ioelements`
@@ -312,19 +319,22 @@ Methods:
 ```go
 package ioelements
 
-// NewParser create new Parser
-func NewParser(definitions []IOElementDefinition) *Parser
+// NewDecoder create new Decoder
+func NewDecoder(definitions []IOElementDefinition)
 
-// DefaultParser returns default parser with IO Element definitions represented in `ioelements_dump.go` file
-func DefaultParser() *Parser
+// DefaultDecoder returns a decoder with I/O Element definitions represented in `ioelements_dump.go` file
+func DefaultDecoder()
 
-// GetElementInfo returns full description of IO Element by its id and model name
+// GetElementInfo returns full description of I/O Element by its id and model name
 // If you don't know the model name, you can skip the model name check by passing '*' as the model name
-func (r *Parser) GetElementInfo(modelName string, id uint16) (*IOElementDefinition, error)
+func (r *Decoder) GetElementInfo(modelName string, id uint16) (*IOElementDefinition, error)
 
-// Parse parses IO Element (result can be represented in numan-readable format)
+// Decode decodes an I/O Element by model name and id (result can be represented in numan-readable format)
 // If you don't know the model name, you can skip the model name check by passing '*' as the model name
-func (r *Parser) Parse(modelName string, id uint16, buffer []byte) (*IOElement, error)
+func (r *Decoder) Decode(modelName string, id uint16, buffer []byte) (*IOElement, error)
+
+// DecodeByDefinition decodes an I/O Element according to a given definition
+func (r *Decoder) DecodeByDefinition(def *IOElementDefinition, buffer []byte) (*IOElement, error)
 ```
 
 ### Simple benchmarks (go test -bench)
@@ -339,20 +349,23 @@ Output:
 
 ```text
 goos: darwin
-goarch: amd64
+goarch: arm64
 pkg: github.com/alim-zanibekov/teltonika
-cpu: Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz
-BenchmarkTCPDecode-16                                             542722              1982 ns/op             405 B/op         11 allocs/op
-BenchmarkTCPDecodeReader-16                                       524685              2034 ns/op             517 B/op         13 allocs/op
-BenchmarkUDPDecodeSlice-16                                       1000000              1022 ns/op            1350 B/op         38 allocs/op
-BenchmarkUDPDecodeReader-16                                      1115318              1106 ns/op            1551 B/op         40 allocs/op
-BenchmarkTCPDecodeAllocElementsOnReadBuffer-16                    574172              1932 ns/op             382 B/op          5 allocs/op
-BenchmarkTCPDecodeReaderAllocElementsOnReadBuffer-16              618633              1955 ns/op             498 B/op          7 allocs/op
-BenchmarkUDPDecodeSliceAllocElementsOnReadBuffer-16              1876750               634.1 ns/op          1267 B/op          6 allocs/op
-BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer-16             1657054               712.0 ns/op          1469 B/op          8 allocs/op
-BenchmarkEncode-16                                               7849704               145.8 ns/op            36 B/op          1 allocs/op
+BenchmarkTCPDecode-10                                            2556680               472.8 ns/op           405 B/op         11 allocs/op
+BenchmarkTCPDecodeReader-10                                      2203923               546.8 ns/op           517 B/op         13 allocs/op
+BenchmarkUDPDecodeSlice-10                                       1582856               697.8 ns/op          1350 B/op         38 allocs/op
+BenchmarkUDPDecodeReader-10                                      1571578               779.7 ns/op          1550 B/op         40 allocs/op
+BenchmarkTCPDecodeAllocElementsOnReadBuffer-10                   2882876               410.8 ns/op           382 B/op          5 allocs/op
+BenchmarkTCPDecodeReaderAllocElementsOnReadBuffer-10             2506252               478.1 ns/op           498 B/op          7 allocs/op
+BenchmarkUDPDecodeSliceAllocElementsOnReadBuffer-10              3202860               374.4 ns/op          1264 B/op          6 allocs/op
+BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer-10             2589747               473.6 ns/op          1468 B/op          8 allocs/op
+BenchmarkEncodeTCP-10                                           16615262                75.58 ns/op           36 B/op          1 allocs/op
+BenchmarkEncodeUDP-10                                           22332055                53.40 ns/op           48 B/op          1 allocs/op
+BenchmarkCrc16IBMGenerateLookupTable-10                          4424582               270.1 ns/op           512 B/op          1 allocs/op
+BenchmarkCrc16IBMWithLookupTable-10                               455336              2641 ns/op               0 B/op          0 allocs/op
+BenchmarkCrc16IBMWithoutLookupTable-10                             47612             25130 ns/op               0 B/op          0 allocs/op
 PASS
-ok      github.com/alim-zanibekov/teltonika     14.699s
+ok      github.com/alim-zanibekov/teltonika     22.685s
 ```
 
 As you can see from the results, passing the `&teltonika.DecodeConfig{teltonika.OnReadBuffer}`
