@@ -9,6 +9,7 @@ package teltonika
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"math/rand"
 	"strings"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestCodec12Encode(t *testing.T) {
-	buffer, err := EncodePacket(&Packet{
+	buffer, err := EncodePacketTCP(&Packet{
 		CodecID:  Codec12,
 		Data:     nil,
 		Messages: []Message{{Type: TypeCommand, Text: "getinfo"}},
@@ -36,17 +37,17 @@ func TestCodec12Encode(t *testing.T) {
 }
 
 func TestCodec13Encode(t *testing.T) {
-	buffer, err := EncodePacket(&Packet{
+	buffer, err := EncodePacketTCP(&Packet{
 		CodecID:  Codec13,
 		Data:     nil,
-		Messages: []Message{{Type: TypeCommand, Text: "getinfo", Timestamp: 176276256}},
+		Messages: []Message{{Type: TypeResponse, Text: "getinfo", Timestamp: 176276256}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	encoded := hex.EncodeToString(buffer)
-	expected := strings.ToLower("00000000000000130d01050000000b0a81c320676574696e666f010000ed9b")
+	expected := strings.ToLower("00000000000000130d01060000000b0a81c320676574696e666f0100001d6b")
 
 	if encoded != expected {
 		t.Error("encoded: ", encoded)
@@ -55,7 +56,7 @@ func TestCodec13Encode(t *testing.T) {
 }
 
 func TestCodec14Encode(t *testing.T) {
-	buffer, err := EncodePacket(&Packet{
+	buffer, err := EncodePacketTCP(&Packet{
 		CodecID:  Codec14,
 		Data:     nil,
 		Messages: []Message{{Type: TypeCommand, Text: "getver", Imei: "352093081452251"}},
@@ -73,6 +74,225 @@ func TestCodec14Encode(t *testing.T) {
 	}
 }
 
+func TestCodec15Encode(t *testing.T) {
+	buffer, err := EncodePacketTCP(&Packet{
+		CodecID:  Codec15,
+		Data:     nil,
+		Messages: []Message{{Type: 0x0B, Text: "Hello!\n", Imei: "123456789123456", Timestamp: 1699440036}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("000000000000001b0f010b00000013654b65a4012345678912345648656c6c6f210a01000093d6")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs8EncodeTCP(t *testing.T) {
+	buffer, err := EncodePacketTCP(&Packet{
+		CodecID: Codec8,
+		Data: []Data{{
+			TimestampMs:    1720003694000,
+			Lat:            42.373737,
+			Lng:            42.373737,
+			Altitude:       731,
+			Angle:          262,
+			EventID:        239,
+			Speed:          0,
+			Satellites:     5,
+			Priority:       1,
+			GenerationType: Unknown,
+			Elements: []IOElement{
+				{Id: 239, Value: []byte{1}},
+				{Id: 240, Value: []byte{1}},
+				{Id: 1, Value: []byte{0}},
+				{Id: 66, Value: []byte{0x31, 0x4a}},
+				{Id: 67, Value: []byte{0x10, 0x31}},
+				{Id: 9, Value: []byte{0, 0x2b}},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("000000000000003008010000019078358db0011941b81a1941b81a02db0106050000ef0603ef01f00101000342314a43103109002b0000010000c897")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs8EEncodeTCP(t *testing.T) {
+	msg11, _ := hex.DecodeString("000000003544c87a")
+	msg14, _ := hex.DecodeString("000000001dd7e06a")
+	buffer, err := EncodePacketTCP(&Packet{
+		CodecID: Codec8E,
+		Data: []Data{{
+			TimestampMs: 1560166592000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 1, Speed: 0, Satellites: 0, Priority: 1,
+			GenerationType: Unknown,
+			Elements: []IOElement{
+				{Id: 1, Value: []byte{1}},
+				{Id: 17, Value: []byte{0, 0x1d}},
+				{Id: 16, Value: []byte{0x01, 0x5e, 0x2c, 0x88}},
+				{Id: 11, Value: msg11},
+				{Id: 14, Value: msg14},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("000000000000004A8E010000016B412CEE000100000000000000000000000000000000010005000100010100010011001D00010010015E2C880002000B000000003544C87A000E000000001DD7E06A00000100002994")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs16EncodeTCP(t *testing.T) {
+	buffer, err := EncodePacketTCP(&Packet{
+		CodecID: Codec16,
+		Data: []Data{{
+			TimestampMs: 1562760414000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 11, Speed: 0, Satellites: 0, Priority: 0,
+			GenerationType: OnChange,
+			Elements: []IOElement{
+				{Id: 1, Value: []byte{0}},
+				{Id: 3, Value: []byte{0}},
+				{Id: 11, Value: []byte{0, 0x27}},
+				{Id: 66, Value: []byte{0x56, 0x3a}},
+			},
+		}, {
+			TimestampMs: 1562760415000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 11, Speed: 0, Satellites: 0, Priority: 0,
+			GenerationType: OnChange,
+			Elements: []IOElement{
+				{Id: 1, Value: []byte{0}},
+				{Id: 3, Value: []byte{0}},
+				{Id: 11, Value: []byte{0, 0x26}},
+				{Id: 66, Value: []byte{0x56, 0x3a}},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("000000000000005F10020000016BDBC7833000000000000000000000000000000000000B05040200010000030002000B00270042563A00000000016BDBC7871800000000000000000000000000000000000B05040200010000030002000B00260042563A00000200005FB3")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs8EncodeUDP(t *testing.T) {
+	buffer, err := EncodePacketUDP("352093086403655", 51966, 5, &Packet{
+		CodecID: Codec8,
+		Data: []Data{{
+			TimestampMs: 1560407006000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 1, Speed: 0, Satellites: 0, Priority: 1,
+			GenerationType: Unknown,
+			Elements: []IOElement{
+				{Id: 21, Value: []byte{3}},
+				{Id: 1, Value: []byte{1}},
+				{Id: 66, Value: []byte{0x5d, 0xbc}},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("003DCAFE0105000F33353230393330383634303336353508010000016B4F815B30010000000000000000000000000000000103021503010101425DBC000001")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs8EEncodeUDP(t *testing.T) {
+	msg16, _ := hex.DecodeString("015e2c88")
+	msg11, _ := hex.DecodeString("000000003544c87a")
+	msg14, _ := hex.DecodeString("000000001dd7e06a")
+	buffer, err := EncodePacketUDP("352093086403655", 51966, 7, &Packet{
+		CodecID: Codec8E,
+		Data: []Data{{
+			TimestampMs: 1560407121000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 1, Speed: 0, Satellites: 0, Priority: 1,
+			GenerationType: Unknown,
+			Elements: []IOElement{
+				{Id: 1, Value: []byte{1}},
+				{Id: 17, Value: []byte{0, 0x9d}},
+				{Id: 16, Value: msg16},
+				{Id: 11, Value: msg11},
+				{Id: 14, Value: msg14},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("005FCAFE0107000F3335323039333038363430333635358E010000016B4F831C680100000000000000000000000000000000010005000100010100010011009D00010010015E2C880002000B000000003544C87A000E000000001DD7E06A000001")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
+func TestCodecs16EncodeUDP(t *testing.T) {
+	buffer, err := EncodePacketUDP("352094085231592", 51966, 7, &Packet{
+		CodecID: Codec16,
+		Data: []Data{{
+			TimestampMs: 1447804801000,
+			Lat:         0, Lng: 0, Altitude: 0, Angle: 0, EventID: 239, Speed: 0, Satellites: 0, Priority: 0,
+			GenerationType: OnChange,
+			Elements: []IOElement{
+				{Id: 1, Value: []byte{0}},
+				{Id: 3, Value: []byte{0}},
+				{Id: 180, Value: []byte{0}},
+				{Id: 239, Value: []byte{1}},
+				{Id: 66, Value: []byte{0x11, 0x1a}},
+			},
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := hex.EncodeToString(buffer)
+	expected := strings.ToLower("0048CAFE0107000F33353230393430383532333135393210010000015117E40FE80000000000000000000000000000000000EF05050400010000030000B40000EF01010042111A000001")
+
+	if encoded != expected {
+		t.Error("encoded: ", encoded)
+		t.Error("expected:", expected)
+	}
+}
+
 func TestTCPCodecsDecodeWithoutErrors(t *testing.T) {
 	cases := []string{
 		"000000000000003608010000016B40D8EA30010000000000000000000000000000000105021503010101425E0F01F10000601A014E0000000000000000010000C7CF",
@@ -81,6 +301,10 @@ func TestTCPCodecsDecodeWithoutErrors(t *testing.T) {
 		"000000000000005F10020000016BDBC7833000000000000000000000000000000000000B05040200010000030002000B00270042563A00000000016BDBC7871800000000000000000000000000000000000B05040200010000030002000B00260042563A00000200005FB3",
 		"000000000000004A8E010000016B412CEE000100000000000000000000000000000000010005000100010100010011001D00010010015E2C880002000B000000003544C87A000E000000001DD7E06A00000100002994",
 		"00000000000000A98E020000017357633410000F0DC39B2095964A00AC00F80B00000000000B000500F00100150400C800004501007156000500B5000500B600040018000000430FE00044011B000100F10000601B000000000000017357633BE1000F0DC39B2095964A00AC00F80B000001810001000000000000000000010181002D11213102030405060708090A0B0C0D0E0F104545010ABC212102030405060708090A0B0C0D0E0F10020B010AAD020000BF30",
+		"000000000000000F0C010500000007676574696E666F0100004312",
+		"00000000000000130d01060000000b0a81c320676574696e666f0100001d6b",
+		"00000000000000160E01050000000E0352093081452251676574766572010000D2C1",
+		"000000000000001b0f010b00000013654b65a4012345678912345648656c6c6f210a01000093d6",
 	}
 
 	for _, s := range cases {
@@ -251,6 +475,35 @@ func TestCodecsDecodeCommandResponseWithoutErrors(t *testing.T) {
 	}
 }
 
+func TestPacketJSONMarshalUnmarshal(t *testing.T) {
+	cases := []string{
+		"00000000000000900C010600000088494E493A323031392F372F323220373A3232205254433A323031392F372F323220373A3533205253543A32204552523A312053523A302042523A302043463A302046473A3020464C3A302054553A302F302055543A3020534D533A30204E4F4750533A303A3330204750533A31205341543A302052533A332052463A36352053463A31204D443A30010000C78F",
+		"00000000000000370C01060000002F4449313A31204449323A30204449333A302041494E313A302041494E323A313639323420444F313A3020444F323A3101000066E3",
+		"000000000000005F10020000016BDBC7833000000000000000000000000000000000000B05040200010000030002000B00270042563A00000000016BDBC7871800000000000000000000000000000000000B05040200010000030002000B00260042563A00000200005FB3",
+	}
+
+	for _, s := range cases {
+		buf, _ := hex.DecodeString(s)
+		size, decoded, err := DecodeTCPFromSlice(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size != len(buf) {
+			t.Error("[DecodeTCPFromSlice] payload not fully processed")
+		}
+
+		res, err := json.Marshal(decoded.Packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var packet Packet
+		err = json.Unmarshal(res, &packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func tcpBenchCases(n int) [][]byte {
 	cases := []string{
 		"000000000000003608010000016B40D8EA30010000000000000000000000000000000105021503010101425E0F01F10000601A014E0000000000000000010000C7CF",
@@ -391,7 +644,7 @@ func BenchmarkUDPDecodeReaderAllocElementsOnReadBuffer(b *testing.B) {
 	benchmarkUDPDecodeReader(b, &DecodeConfig{OnReadBuffer})
 }
 
-func BenchmarkEncode(b *testing.B) {
+func BenchmarkEncodeTCP(b *testing.B) {
 	cases := []*Packet{
 		{
 			CodecID:  Codec12,
@@ -411,12 +664,12 @@ func BenchmarkEncode(b *testing.B) {
 		{
 			CodecID:  Codec13,
 			Data:     nil,
-			Messages: []Message{{Type: TypeCommand, Text: "getver", Timestamp: uint32(time.Now().Unix())}},
+			Messages: []Message{{Type: TypeResponse, Text: "getver", Timestamp: uint32(time.Now().Unix())}},
 		},
 		{
 			CodecID:  Codec13,
 			Data:     nil,
-			Messages: []Message{{Type: TypeCommand, Text: "getinfo", Timestamp: uint32(time.Now().Unix())}},
+			Messages: []Message{{Type: TypeResponse, Text: "getinfo", Timestamp: uint32(time.Now().Unix())}},
 		},
 		{
 			CodecID:  Codec14,
@@ -439,7 +692,62 @@ func BenchmarkEncode(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := EncodePacket(benchCase[i])
+		_, err := EncodePacketTCP(benchCase[i])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncodeUDP(b *testing.B) {
+	cases := []*Packet{
+		{
+			CodecID:  Codec12,
+			Data:     nil,
+			Messages: []Message{{Type: TypeCommand, Text: "getinfo"}},
+		},
+		{
+			CodecID:  Codec12,
+			Data:     nil,
+			Messages: []Message{{Type: TypeCommand, Text: "getio"}},
+		},
+		{
+			CodecID:  Codec12,
+			Data:     nil,
+			Messages: []Message{{Type: TypeCommand, Text: "getver"}},
+		},
+		{
+			CodecID:  Codec13,
+			Data:     nil,
+			Messages: []Message{{Type: TypeResponse, Text: "getver", Timestamp: uint32(time.Now().Unix())}},
+		},
+		{
+			CodecID:  Codec13,
+			Data:     nil,
+			Messages: []Message{{Type: TypeResponse, Text: "getinfo", Timestamp: uint32(time.Now().Unix())}},
+		},
+		{
+			CodecID:  Codec14,
+			Data:     nil,
+			Messages: []Message{{Type: TypeCommand, Text: "getver", Imei: "352093081452251"}},
+		},
+		{
+			CodecID:  Codec14,
+			Data:     nil,
+			Messages: []Message{{Type: TypeCommand, Text: "getio", Imei: "352093081452251"}},
+		},
+	}
+
+	benchCase := make([]*Packet, b.N)
+
+	for i := 0; i < b.N; i++ {
+		benchCase[i] = cases[rand.Intn(len(cases))]
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := EncodePacketUDP("352093081452251", 0, 0, benchCase[i])
 		if err != nil {
 			b.Fatal(err)
 		}
