@@ -117,22 +117,33 @@ func (r *Decoder) DecodeByDefinition(def *IOElementDefinition, buffer []byte) (*
 	if size == 1 && def.Min == 0 && def.Max == 1 && def.Type == IOElementUnsigned {
 		res = buffer[0] == 1
 	} else if (size == 1 || size == 2 || size == 4 || size == 8) && (def.Type == IOElementUnsigned || def.Type == IOElementSigned) {
-		buf := make([]byte, 8)
-		copy(buf[8-size:], buffer)
-
 		if def.Type == IOElementUnsigned {
-			v := binary.BigEndian.Uint64(buf)
+			var v uint64
+			if size == 1 {
+				v = uint64(buffer[0])
+			} else if size == 2 {
+				v = uint64(binary.BigEndian.Uint16(buffer))
+			} else if size == 4 {
+				v = uint64(binary.BigEndian.Uint32(buffer))
+			} else {
+				v = binary.BigEndian.Uint64(buffer)
+			}
 			if def.Multiplier != 1.0 {
 				res = float64(v) * def.Multiplier
 			} else {
 				res = v
 			}
 		} else if def.Type == IOElementSigned {
-			if (buffer[0] >> 7) == 1 {
-				buf[8-size] &= 0x7F
-				buf[0] |= 0x80
+			var v int64
+			if size == 1 {
+				v = int64(int8(buffer[0]))
+			} else if size == 2 {
+				v = int64(int16(binary.BigEndian.Uint16(buffer)))
+			} else if size == 4 {
+				v = int64(int32(binary.BigEndian.Uint32(buffer)))
+			} else {
+				v = int64(binary.BigEndian.Uint64(buffer))
 			}
-			v := int64(binary.BigEndian.Uint64(buf))
 			if def.Multiplier != 1.0 {
 				res = float64(v) * def.Multiplier
 			} else {
