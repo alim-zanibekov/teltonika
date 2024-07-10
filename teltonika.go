@@ -381,7 +381,7 @@ func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer [
 		return nil, nil, err
 	}
 
-	crcCalc := Crc16IBM(buffer[8 : len(buffer)-4])
+	crcCalc := Crc16IBM(reader.input[:reader.pos])
 
 	crc, err := reader.ReadUInt32BE()
 	if err != nil {
@@ -389,7 +389,7 @@ func decodeTCPInternal(inputReader io.Reader, inputBuffer []byte, outputBuffer [
 	}
 
 	if uint32(crcCalc) != crc {
-		return nil, nil, fmt.Errorf("calculated CRC-16 sum '%v' is not equal to control CRC-16 sum '%v'", crcCalc, crc)
+		return nil, nil, fmt.Errorf("calculated CRC-16 sum '%08X' is not equal to control CRC-16 sum '%08X'", crcCalc, crc)
 	}
 
 	if !isCMDCodecId(uint8(packet.Packet.CodecID)) {
@@ -799,7 +799,7 @@ func decodeElementsCodec8E(reader *byteReader, data *Data) error {
 		return err
 	}
 
-	for i := k; i < int(ioCountNX); i++ {
+	for i := 0; i < int(ioCountNX); i++ {
 		id, err = reader.ReadUInt16BE()
 		if err != nil {
 			return err
@@ -812,13 +812,14 @@ func decodeElementsCodec8E(reader *byteReader, data *Data) error {
 		if err != nil {
 			return err
 		}
-		if i >= int(ioCount) {
+		if k >= int(ioCount) {
 			return fmt.Errorf("too many i/o elements, expected at most %d, found %d", ioCount, i)
 		}
-		data.Elements[i] = IOElement{
+		data.Elements[k] = IOElement{
 			Id:    id,
 			Value: value,
 		}
+		k++
 	}
 
 	return nil
