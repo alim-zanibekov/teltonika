@@ -732,11 +732,17 @@ func normalize(it *IOElementDefinition) {
 		// uint8 https://wiki.teltonika-gps.com/view/FMB920_Teltonika_Data_Sending_Parameters_ID
 		// ASCII https://wiki.teltonika-gps.com/view/FMM250_Teltonika_Data_Sending_Parameters_ID
 	}
+	if it.Type == IOElementUnsigned && it.Min < 0 {
+		it.Type = IOElementSigned
+	}
 	if it.Id == 168 && it.Max == 6553 {
 		it.Max = 65535
 	}
 	if it.Id == 103 && it.Max == 1677215 {
 		it.Max = 16777215
+	}
+	if it.Id == 69 && it.Max == 3 {
+		it.Max = 4
 	}
 	if (it.Id == 278 || it.Id == 275 || it.Id == 272 || it.Id == 269) && it.NumBytes == 2 {
 		it.NumBytes = 1

@@ -91,6 +91,7 @@ type Data struct {
 	Priority       uint8          `json:"priority"`
 	GenerationType GenerationType `json:"generationType"` // codec 16 else Unknown
 	Elements       []IOElement    `json:"elements"`
+	Raw            []byte         `json:"raw"`
 }
 
 type IOElementValue []byte
@@ -544,6 +545,7 @@ func decodePacket(reader *byteReader, packet *Packet) error {
 }
 
 func decodeData(codecId CodecId, reader *byteReader, data *Data) error {
+	startPos := reader.pos
 	timestampMs, err := reader.ReadUInt64BE()
 	if err != nil {
 		return err
@@ -587,14 +589,22 @@ func decodeData(codecId CodecId, reader *byteReader, data *Data) error {
 	data.Priority = priority
 
 	if codecId == Codec8 {
-		return decodeElementsCodec8(reader, data)
+		err = decodeElementsCodec8(reader, data)
 	} else if codecId == Codec8E {
-		return decodeElementsCodec8E(reader, data)
+		err = decodeElementsCodec8E(reader, data)
 	} else if codecId == Codec16 {
-		return decodeElementsCodec16(reader, data)
+		err = decodeElementsCodec16(reader, data)
+	} else {
+		err = fmt.Errorf("unknown codec %d", codecId)
+	}
+	if err != nil {
+		return err
 	}
 
-	return fmt.Errorf("unknown codec %d", codecId)
+	data.Raw = make([]byte, reader.pos-startPos)
+	copy(data.Raw, reader.input[startPos:reader.pos])
+
+	return nil
 }
 
 func decodeCommand(codecId CodecId, reader *byteReader, data *Message) error {

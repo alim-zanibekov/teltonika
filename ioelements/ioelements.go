@@ -128,7 +128,7 @@ func (r *Decoder) DecodeByDefinition(def *IOElementDefinition, buffer []byte) (*
 			} else {
 				v = binary.BigEndian.Uint64(buffer)
 			}
-			if def.Multiplier != 1.0 {
+			if def.Multiplier != 0 && def.Multiplier != 1.0 {
 				res = float64(v) * def.Multiplier
 			} else {
 				res = v
@@ -144,7 +144,7 @@ func (r *Decoder) DecodeByDefinition(def *IOElementDefinition, buffer []byte) (*
 			} else {
 				v = int64(binary.BigEndian.Uint64(buffer))
 			}
-			if def.Multiplier != 1.0 {
+			if def.Multiplier != 0 && def.Multiplier != 1.0 {
 				res = float64(v) * def.Multiplier
 			} else {
 				res = v
