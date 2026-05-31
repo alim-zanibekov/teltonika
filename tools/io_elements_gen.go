@@ -69,13 +69,19 @@ type CsvParserOptions struct {
 	} `positional-args:"yes" required:"yes"`
 }
 
+type PreserveMergeOptions struct {
+	Base flags.Filename `long:"base" description:"base definitions file (.go or .csv); defaults to first --merge-from file"`
+}
+
 type Options struct {
-	ParseNetwork NetworkParserOptions `command:"load-net" optional:"true"`
-	ParseCsv     CsvParserOptions     `command:"load-csv" optional:"true"`
-	GenOutput    flags.Filename       `short:"o" long:"gen-out" default:"./ioelements_dump.go" description:"output file path for I/O elements definitions list"`
-	NoGen        bool                 `long:"no-gen" description:"disable go file generation"`
-	GenPkgName   string               `long:"gen-pkg-name" default:"main" description:"package name for generated file"`
-	GenInternal  bool                 `long:"gen-internal" description:"generate file for internal usage in ioelements package"`
+	ParseNetwork   NetworkParserOptions `command:"load-net" optional:"true"`
+	ParseCsv       CsvParserOptions     `command:"load-csv" optional:"true"`
+	PreserveMerge  PreserveMergeOptions `command:"preserve-merge" optional:"true"`
+	MergeFrom      []string             `long:"merge-from" description:"merge with existing definitions (.go or .csv); never drops models or IO entries"`
+	GenOutput      flags.Filename       `short:"o" long:"gen-out" default:"./ioelements_dump.go" description:"output file path for I/O elements definitions list"`
+	NoGen          bool                 `long:"no-gen" description:"disable go file generation"`
+	GenPkgName     string               `long:"gen-pkg-name" default:"main" description:"package name for generated file"`
+	GenInternal    bool                 `long:"gen-internal" description:"generate file for internal usage in ioelements package"`
 }
 
 var options Options
@@ -93,6 +99,7 @@ func main() {
 	switch parser.Command.Active.Name {
 	case "load-net":
 		res := collectDefinitionsNetwork(options.ParseNetwork.Models)
+		res = applyMergeFrom(res)
 		if options.ParseNetwork.CsvOutput != "" {
 			dumpCsv(res, string(options.ParseNetwork.CsvOutput))
 		}
@@ -101,10 +108,296 @@ func main() {
 		}
 	case "load-csv":
 		res := readCsv(string(options.ParseCsv.Arg.InputFile))
+		res = applyMergeFrom(res)
+		if !options.NoGen {
+			generate(res, string(options.GenOutput))
+		}
+	case "preserve-merge":
+		res := runPreserveMerge()
 		if !options.NoGen {
 			generate(res, string(options.GenOutput))
 		}
 	}
+}
+
+func applyMergeFrom(base []*IOElementDefinition) []*IOElementDefinition {
+	res := base
+	for _, path := range options.MergeFrom {
+		existing := readDefinitions(path)
+		before := countSupportedModels(res)
+		res = mergePreserveHistorical(res, existing)
+		after := countSupportedModels(res)
+		added := after - before
+		if added > 0 {
+			log.Printf("merge-from %s: preserved %d additional tracker model(s)", path, added)
+		}
+	}
+	return res
+}
+
+func runPreserveMerge() []*IOElementDefinition {
+	if len(options.MergeFrom) == 0 {
+		log.Fatal("preserve-merge requires at least one --merge-from file")
+	}
+	basePath := string(options.PreserveMerge.Base)
+	if basePath == "" {
+		basePath = options.MergeFrom[0]
+		options.MergeFrom = options.MergeFrom[1:]
+	}
+	res := readDefinitions(basePath)
+	return applyMergeFrom(res)
+}
+
+func countSupportedModels(data []*IOElementDefinition) int {
+	models := map[string]bool{}
+	for _, d := range data {
+		for _, m := range d.SupportedModels {
+			models[m] = true
+		}
+	}
+	return len(models)
+}
+
+func mergePreserveHistorical(scraped, existing []*IOElementDefinition) []*IOElementDefinition {
+	result := make([]*IOElementDefinition, len(scraped))
+	for i, d := range scraped {
+		dup := cloneDefinition(d)
+		result[i] = dup
+	}
+
+	for _, old := range existing {
+		matched := false
+		for _, newDef := range result {
+			if definitionsCompatible(old, newDef) {
+				newDef.SupportedModels = unique(append(newDef.SupportedModels, old.SupportedModels...))
+				sort.Strings(newDef.SupportedModels)
+				newDef.Groups = unique(append(newDef.Groups, old.Groups...))
+				sort.Strings(newDef.Groups)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			result = append(result, cloneDefinition(old))
+			log.Printf("merge: preserved historical IO definition id=%d name=%q models=%v",
+				old.Id, old.Name, old.SupportedModels)
+		}
+	}
+
+	slices.SortStableFunc(result, func(a, b *IOElementDefinition) int {
+		if a.Id != b.Id {
+			return int(a.Id) - int(b.Id)
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return result
+}
+
+func cloneDefinition(d *IOElementDefinition) *IOElementDefinition {
+	dup := *d
+	dup.SupportedModels = append(StringSlice(nil), d.SupportedModels...)
+	dup.Groups = append(StringSlice(nil), d.Groups...)
+	return &dup
+}
+
+func definitionsCompatible(a, b *IOElementDefinition) bool {
+	return a.Id == b.Id && a.Name == b.Name && isDefinitionsEqualExceptSupportedModels(a, b)
+}
+
+func readDefinitions(path string) []*IOElementDefinition {
+	switch {
+	case strings.HasSuffix(strings.ToLower(path), ".csv"):
+		return readCsv(path)
+	case strings.HasSuffix(path, ".go"):
+		return readDefinitionsFromGo(path)
+	default:
+		log.Fatalf("merge-from: unsupported file type: %s", path)
+		return nil
+	}
+}
+
+var quotedStringRe = regexp.MustCompile(`"((?:\\.|[^"\\])*)"`)
+
+func readDefinitionsFromGo(path string) []*IOElementDefinition {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var res []*IOElementDefinition
+	inDefs := false
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.Contains(line, "var ioElementDefinitions") {
+			inDefs = true
+			continue
+		}
+		if !inDefs {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "}" {
+			break
+		}
+		if !strings.HasPrefix(line, "\t{") {
+			continue
+		}
+		def, err := parseGoDefinitionLine(trimmed)
+		if err != nil {
+			log.Printf("warning: skip definition in %s: %v", path, err)
+			continue
+		}
+		res = append(res, def)
+	}
+	return res
+}
+
+func parseGoDefinitionLine(line string) (*IOElementDefinition, error) {
+	line = strings.TrimSuffix(strings.TrimSpace(line), ",")
+	if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
+		return nil, fmt.Errorf("not a definition literal")
+	}
+
+	groupsIdx := strings.LastIndex(line, ", []string{")
+	if groupsIdx < 0 {
+		return nil, fmt.Errorf("missing groups slice")
+	}
+	groupsPart := strings.TrimSpace(line[groupsIdx+2:])
+	line = line[:groupsIdx]
+
+	modelsIdx := strings.LastIndex(line, ", []string{")
+	if modelsIdx < 0 {
+		return nil, fmt.Errorf("missing supported models slice")
+	}
+	modelsPart := strings.TrimSpace(line[modelsIdx+2:])
+	scalarPart := strings.TrimSpace(line[1:modelsIdx])
+
+	scalarFields, err := splitCommaFields(scalarPart)
+	if err != nil {
+		return nil, err
+	}
+	if len(scalarFields) != 9 {
+		return nil, fmt.Errorf("expected 9 scalar fields, got %d", len(scalarFields))
+	}
+
+	id, err := strconv.Atoi(scalarFields[0])
+	if err != nil {
+		return nil, err
+	}
+	name, err := parseGoJSONString(scalarFields[1])
+	if err != nil {
+		return nil, err
+	}
+	numBytes, err := strconv.Atoi(scalarFields[2])
+	if err != nil {
+		return nil, err
+	}
+	elemType, err := parseGoElementType(scalarFields[3])
+	if err != nil {
+		return nil, err
+	}
+	min, err := strconv.ParseFloat(scalarFields[4], 64)
+	if err != nil {
+		return nil, err
+	}
+	max, err := strconv.ParseFloat(scalarFields[5], 64)
+	if err != nil {
+		return nil, err
+	}
+	multiplier, err := strconv.ParseFloat(scalarFields[6], 64)
+	if err != nil {
+		return nil, err
+	}
+	units, err := parseGoJSONString(scalarFields[7])
+	if err != nil {
+		return nil, err
+	}
+	description, err := parseGoJSONString(scalarFields[8])
+	if err != nil {
+		return nil, err
+	}
+
+	return &IOElementDefinition{
+		Id:              uint16(id),
+		Name:            name,
+		NumBytes:        numBytes,
+		Type:            elemType,
+		Min:             min,
+		Max:             max,
+		Multiplier:      multiplier,
+		Units:           units,
+		Description:     description,
+		SupportedModels: parseGoStringSlice(modelsPart),
+		Groups:          parseGoStringSlice(groupsPart),
+	}, nil
+}
+
+func splitCommaFields(s string) ([]string, error) {
+	var fields []string
+	var b strings.Builder
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escape {
+			b.WriteByte(c)
+			escape = false
+			continue
+		}
+		if c == '\\' && inString {
+			b.WriteByte(c)
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			b.WriteByte(c)
+			continue
+		}
+		if c == ',' && !inString {
+			fields = append(fields, strings.TrimSpace(b.String()))
+			b.Reset()
+			continue
+		}
+		b.WriteByte(c)
+	}
+	fields = append(fields, strings.TrimSpace(b.String()))
+	return fields, nil
+}
+
+func parseGoJSONString(raw string) (string, error) {
+	var out string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func parseGoElementType(raw string) (ElementType, error) {
+	raw = strings.TrimPrefix(strings.TrimSpace(raw), "ioelements.")
+	switch raw {
+	case "IOElementUnsigned":
+		return IOElementUnsigned, nil
+	case "IOElementSigned":
+		return IOElementSigned, nil
+	case "IOElementHEX":
+		return IOElementHEX, nil
+	case "IOElementASCII":
+		return IOElementASCII, nil
+	default:
+		return 0, fmt.Errorf("unknown element type %q", raw)
+	}
+}
+
+func parseGoStringSlice(raw string) StringSlice {
+	matches := quotedStringRe.FindAllStringSubmatch(raw, -1)
+	out := make(StringSlice, 0, len(matches))
+	for _, m := range matches {
+		var str string
+		if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &str); err != nil {
+			continue
+		}
+		out = append(out, str)
+	}
+	return out
 }
 
 func (r *StringSlice) MarshalCSV() (string, error) {
