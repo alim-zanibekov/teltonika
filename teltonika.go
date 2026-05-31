@@ -654,18 +654,19 @@ func decodeElementsCodec8(reader *byteReader, data *Data) error {
 
 	data.GenerationType = Unknown
 	data.EventID = uint16(eventId)
-	data.Elements = make([]IOElement, ioCount)
 
 	var n uint8
 	var id uint8
 	var value []byte
-	var k = 0
+	var groupSum uint8
+	elements := make([]IOElement, 0, ioCount)
 
 	for i := 1; i <= 8; i *= 2 {
 		n, err = reader.ReadUInt8BE()
 		if err != nil {
 			return err
 		}
+		groupSum += n
 		for j := 0; j < int(n); j++ {
 			id, err = reader.ReadUInt8BE()
 			if err != nil {
@@ -675,17 +676,24 @@ func decodeElementsCodec8(reader *byteReader, data *Data) error {
 			if err != nil {
 				return err
 			}
-			if k >= int(ioCount) {
-				return fmt.Errorf("too many i/o elements, expected at most %d, found %d", ioCount, k)
+			if len(elements) >= int(ioCount) {
+				return fmt.Errorf("too many i/o elements, expected at most %d", ioCount)
 			}
-			data.Elements[k] = IOElement{
+			elements = append(elements, IOElement{
 				Id:    uint16(id),
 				Value: value,
-			}
-			k++
+			})
 		}
 	}
 
+	if groupSum != ioCount {
+		return fmt.Errorf("IO count mismatch: declared %d, fixed groups contain %d (N1+N2+N4+N8)", ioCount, groupSum)
+	}
+	if len(elements) != int(ioCount) {
+		return fmt.Errorf("IO count mismatch: declared %d, decoded %d", ioCount, len(elements))
+	}
+
+	data.Elements = elements
 	return nil
 }
 
@@ -711,18 +719,19 @@ func decodeElementsCodec16(reader *byteReader, data *Data) error {
 
 	data.GenerationType = GenerationType(generationType)
 	data.EventID = eventId
-	data.Elements = make([]IOElement, ioCount)
 
 	var n uint8
 	var id uint16
 	var value []byte
-	var k = 0
+	var groupSum uint8
+	elements := make([]IOElement, 0, ioCount)
 
 	for i := 1; i <= 8; i *= 2 {
 		n, err = reader.ReadUInt8BE()
 		if err != nil {
 			return err
 		}
+		groupSum += n
 		for j := 0; j < int(n); j++ {
 			id, err = reader.ReadUInt16BE()
 			if err != nil {
@@ -732,17 +741,24 @@ func decodeElementsCodec16(reader *byteReader, data *Data) error {
 			if err != nil {
 				return err
 			}
-			if k >= int(ioCount) {
-				return fmt.Errorf("too many i/o elements, expected at most %d, found %d", ioCount, k)
+			if len(elements) >= int(ioCount) {
+				return fmt.Errorf("too many i/o elements, expected at most %d", ioCount)
 			}
-			data.Elements[k] = IOElement{
+			elements = append(elements, IOElement{
 				Id:    id,
 				Value: value,
-			}
-			k++
+			})
 		}
 	}
 
+	if groupSum != ioCount {
+		return fmt.Errorf("IO count mismatch: declared %d, fixed groups contain %d (N1+N2+N4+N8)", ioCount, groupSum)
+	}
+	if len(elements) != int(ioCount) {
+		return fmt.Errorf("IO count mismatch: declared %d, decoded %d", ioCount, len(elements))
+	}
+
+	data.Elements = elements
 	return nil
 }
 
@@ -759,18 +775,19 @@ func decodeElementsCodec8E(reader *byteReader, data *Data) error {
 
 	data.GenerationType = Unknown
 	data.EventID = eventId
-	data.Elements = make([]IOElement, ioCount)
 
 	var n uint16
 	var id uint16
 	var value []byte
-	var k = 0
+	var groupSum uint16
+	elements := make([]IOElement, 0, ioCount)
 
 	for i := 1; i <= 8; i *= 2 {
 		n, err = reader.ReadUInt16BE()
 		if err != nil {
 			return err
 		}
+		groupSum += n
 		for j := 0; j < int(n); j++ {
 			id, err = reader.ReadUInt16BE()
 			if err != nil {
@@ -780,14 +797,13 @@ func decodeElementsCodec8E(reader *byteReader, data *Data) error {
 			if err != nil {
 				return err
 			}
-			if k >= int(ioCount) {
-				return fmt.Errorf("too many i/o elements, expected at most %d, found %d", ioCount, k)
+			if len(elements) >= int(ioCount) {
+				return fmt.Errorf("too many i/o elements, expected at most %d", ioCount)
 			}
-			data.Elements[k] = IOElement{
+			elements = append(elements, IOElement{
 				Id:    id,
 				Value: value,
-			}
-			k++
+			})
 		}
 	}
 
@@ -808,20 +824,30 @@ func decodeElementsCodec8E(reader *byteReader, data *Data) error {
 		if err != nil {
 			return err
 		}
+		if length == 0 {
+			return fmt.Errorf("NX IO element %d has zero length", i)
+		}
 		value, err = reader.ReadBytes(int(length))
 		if err != nil {
 			return err
 		}
-		if k >= int(ioCount) {
-			return fmt.Errorf("too many i/o elements, expected at most %d, found %d", ioCount, i)
+		if len(elements) >= int(ioCount) {
+			return fmt.Errorf("too many i/o elements, expected at most %d", ioCount)
 		}
-		data.Elements[k] = IOElement{
+		elements = append(elements, IOElement{
 			Id:    id,
 			Value: value,
-		}
-		k++
+		})
 	}
 
+	if int(groupSum)+int(ioCountNX) != int(ioCount) {
+		return fmt.Errorf("IO count mismatch: declared %d, fixed groups contain %d and NX contains %d", ioCount, groupSum, ioCountNX)
+	}
+	if len(elements) != int(ioCount) {
+		return fmt.Errorf("IO count mismatch: declared %d, decoded %d", ioCount, len(elements))
+	}
+
+	data.Elements = elements
 	return nil
 }
 
